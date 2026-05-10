@@ -3,6 +3,7 @@ name: release-please
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,19 +15,13 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4.1
         with:
-          release-type: go
-          package-name: openusage
-          # Conventional commits drive version bumps automatically.
-          # docs(...) and ci(...) commits do not bump the version.
-          changelog-types: |
-            [
-              {"type":"feat","section":"Features"},
-              {"type":"fix","section":"Bug Fixes"},
-              {"type":"perf","section":"Performance"},
-              {"type":"deps","section":"Dependencies"},
-              {"type":"refactor","section":"Refactoring","hidden":false},
-              {"type":"docs","section":"Documentation","hidden":true},
-              {"type":"chore","section":"Miscellaneous","hidden":true},
-              {"type":"ci","section":"CI/CD","hidden":true},
-              {"type":"test","section":"Tests","hidden":true}
-            ]
+          # Use a PAT (or GitHub App token) so commits release-please pushes
+          # to its branch trigger downstream workflows (CI, Lychee, govulncheck,
+          # CodeQL). Falls back to GITHUB_TOKEN when no PAT is configured —
+          # in that mode the release PR will sit blocked on missing required
+          # checks and need an admin-merge.
+          #
+          # See docs/CI_AUTOMATION_BOTS.md for PAT scope + secret-name details.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

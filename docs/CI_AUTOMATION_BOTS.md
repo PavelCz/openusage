@@ -60,6 +60,18 @@ If those gates pass, the bump is safe to ship. The cost of human review on every
 
 **This requires branch protection on `main` with required status checks.** Without it, `gh pr merge --auto` merges as soon as nothing is blocking — which is "immediately" if nothing's required.
 
+**Required-check workflows must NOT have `paths:` filters.** If a required workflow's path filter doesn't match a PR's diff, the check never fires, so the required-check gate is never satisfied, and auto-merge stalls forever waiting for a check that won't run. We've removed path filters from `lychee.yaml` and `govulncheck.yaml` for this reason. Non-required workflows (e.g. `docs-preview.yaml`) keep their path filters.
+
+### Required checks
+
+The current required-check set on `main`:
+
+- `Build (ubuntu-latest)`, `Build (macos-latest)`
+- `Test (ubuntu-latest)`, `Test (macos-latest)`
+- `Lint`, `Vet`, `gofmt`, `Check go.mod tidiness`
+- `Review` (Dependency Review), `CodeQL`, `Scan for known Go vulnerabilities`
+- `Lychee`
+
 We use the **native GitHub auto-merge** (via `gh pr merge --auto`) instead of a third-party action. Cleaner, no extra permissions to grant.
 
 ### 3. `govulncheck-action`
@@ -139,6 +151,20 @@ For auto-merge to work, the repo needs:
 For `release-please`:
 
 - The workflow needs `contents: write` and `pull-requests: write` on the GITHUB_TOKEN — already granted for the existing release workflow.
+- **`RELEASE_PLEASE_TOKEN` secret** — a fine-grained PAT (or GitHub App token) that lets release-please push commits in a way that *does* trigger downstream workflows (CI, Lychee, govulncheck, CodeQL). Without it, release-please uses `GITHUB_TOKEN` and its pushes are bot-attributed; GitHub Actions explicitly will not chain workflow runs from bot pushes, so the release PR sits with required checks never reporting and stays unmergeable except via admin-merge.
+
+  To create the PAT:
+
+  1. Go to <https://github.com/settings/personal-access-tokens/new> (fine-grained PAT).
+  2. **Resource owner**: yourself. **Repository access**: only `janekbaraniewski/openusage`.
+  3. **Repository permissions**:
+     - **Contents** → Read and write
+     - **Pull requests** → Read and write
+     - **Workflows** → Read and write
+  4. Set an expiry (90d is fine; longer if you trust your machine).
+  5. Save the token. Add as secret `RELEASE_PLEASE_TOKEN` in repo Settings → Secrets and variables → Actions.
+
+  The workflow falls back to `GITHUB_TOKEN` when the PAT secret isn't set — so the project keeps working before the secret is configured, just with the admin-merge step.
 
 For Scorecard:
 
