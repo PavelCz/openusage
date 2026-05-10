@@ -40,6 +40,22 @@ type Service struct {
 
 	pollStateMu sync.Mutex
 	pollState   map[string]*providerPollState // per-account change detection state
+
+	// clock provides the wall-clock used for snapshot timestamps and any
+	// state that needs to be reproducible in tests. Defaults to
+	// core.SystemClock{}; tests can override via WithClock.
+	clock core.Clock
+}
+
+// now is the canonical "what time is it?" hook for the daemon. Code that
+// stamps snap.Timestamp, persists state, or computes deadlines should call
+// this rather than time.Now(). Pure observability paths (request duration
+// logging) can keep time.Now() — they don't need to be deterministic.
+func (s *Service) now() time.Time {
+	if s.clock != nil {
+		return s.clock.Now()
+	}
+	return time.Now()
 }
 
 func RunServer(cfg Config) error {
@@ -109,6 +125,7 @@ func startService(ctx context.Context, cfg Config) (*Service, error) {
 		rmCache:        newReadModelCache(),
 		pollScheduler: newPollScheduler(cfg.PollInterval),
 		pollState:     make(map[string]*providerPollState),
+		clock:         core.SystemClock{},
 	}
 
 	svc.infof(
