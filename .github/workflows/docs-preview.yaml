@@ -9,8 +9,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
-  deployments: write
 
 concurrency:
   group: docs-preview-${{ github.ref }}
@@ -20,6 +18,10 @@ jobs:
   build:
     name: Build & Preview
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      deployments: write
     env:
       CF_TOKEN_PRESENT: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
     steps:
