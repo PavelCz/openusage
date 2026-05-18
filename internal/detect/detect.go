@@ -52,6 +52,7 @@ func AutoDetect() Result {
 	detectAmp(&result)
 	detectGoose(&result)
 	detectHermes(&result)
+	detectMux(&result)
 	detectCrush(&result)
 	detectRooCode(&result)
 	detectKiloCode(&result)

@@ -21,6 +21,7 @@ import (
 	"github.com/janekbaraniewski/openusage/internal/providers/kilocode"
 	"github.com/janekbaraniewski/openusage/internal/providers/mistral"
 	"github.com/janekbaraniewski/openusage/internal/providers/moonshot"
+	"github.com/janekbaraniewski/openusage/internal/providers/mux"
 	"github.com/janekbaraniewski/openusage/internal/providers/ollama"
 	"github.com/janekbaraniewski/openusage/internal/providers/openai"
 	"github.com/janekbaraniewski/openusage/internal/providers/opencode"
@@ -56,6 +57,7 @@ func AllProviders() []core.UsageProvider {
 		amp.New(),
 		goose.New(),
 		hermes.New(),
+		mux.New(),
 		crush.New(),
 		roocode.New(),
 		kilocode.New(),
