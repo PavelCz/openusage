@@ -37,6 +37,10 @@ func (p *Provider) Fetch(ctx context.Context, acct core.AccountConfig) (core.Usa
 	normalizeLegacyPaths(&acct)
 	trackingDBPath := acct.Path("tracking_db", "")
 	stateDBPath := acct.Path("state_db", "")
+	csvExportPath := strings.TrimSpace(acct.Path("csv_export", ""))
+	if csvExportPath == "" && strings.HasSuffix(strings.ToLower(strings.TrimSpace(acct.Binary)), ".csv") {
+		csvExportPath = strings.TrimSpace(acct.Binary)
+	}
 
 	token := acct.Token
 	if token == "" && stateDBPath != "" {
@@ -80,6 +84,22 @@ func (p *Provider) Fetch(ctx context.Context, acct core.AccountConfig) (core.Usa
 	}
 
 	var hasLocalData bool
+	if csvExportPath != "" {
+		before := cursorSnapshotDataSignature(&snap)
+		records, version, err := parseCursorCSVFile(csvExportPath)
+		if err != nil {
+			log.Printf("[cursor] csv export error: %v", err)
+			snap.Raw["csv_error"] = err.Error()
+		} else {
+			applyCursorCSVToSnapshot(records, &snap)
+			if version > 0 {
+				snap.Raw["csv_schema_version"] = fmt.Sprintf("v%d", version)
+			}
+			if cursorSnapshotDataSignature(&snap) != before {
+				hasLocalData = true
+			}
+		}
+	}
 	if trackingDBPath != "" {
 		before := cursorSnapshotDataSignature(&snap)
 		if err := p.readTrackingDB(ctx, trackingDBPath, &snap); err != nil {
