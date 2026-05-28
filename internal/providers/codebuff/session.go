@@ -264,6 +264,8 @@ func inferProvider(model string) string {
 		return "openai"
 	case strings.HasPrefix(m, "gemini-"):
 		return "google"
+	case strings.HasPrefix(m, "codebuff-") || strings.HasPrefix(m, "manicode-"):
+		return "codebuff"
 	default:
 		return "unknown"
 	}

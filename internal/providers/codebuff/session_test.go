@@ -242,12 +242,14 @@ func TestReadAllChats_MultiChannelWalk(t *testing.T) {
 
 func TestInferProvider(t *testing.T) {
 	cases := map[string]string{
-		"claude-opus-4-7": "anthropic",
-		"gpt-5":           "openai",
-		"o1-preview":      "openai",
-		"gemini-2.5-pro":  "google",
-		"qwen-coder":      "unknown",
-		"":                "unknown",
+		"claude-opus-4-7":   "anthropic",
+		"gpt-5":             "openai",
+		"o1-preview":        "openai",
+		"gemini-2.5-pro":    "google",
+		"codebuff-base-foo": "codebuff",
+		"manicode-base-foo": "codebuff",
+		"qwen-coder":        "unknown",
+		"":                  "unknown",
 	}
 	for in, want := range cases {
 		if got := inferProvider(in); got != want {

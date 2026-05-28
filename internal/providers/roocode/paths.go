@@ -28,9 +28,14 @@ const KiloExtensionSubdir = "kilocode.kilo-code"
 // these because they ship as standard VS Code extensions; users are also
 // known to install them on Cursor (which inherits VS Code's globalStorage
 // layout).
+//
+// A variant with serverDir set is an OS-independent VS Code Server layout
+// (~/<serverDir>/data/User/globalStorage). Such variants ignore the
+// per-OS fields.
 type VSCodeVariant struct {
 	// Name is a stable identifier ("vscode", "vscode-insiders", "vscodium",
-	// "cursor", "windsurf") used for log lines and metric attribution.
+	// "cursor", "windsurf", "vscode-server") used for log lines and metric
+	// attribution.
 	Name string
 
 	// macSupportDir is the directory name under
@@ -43,12 +48,18 @@ type VSCodeVariant struct {
 	// winAppDataDir is the directory name under %APPDATA% on Windows /
 	// inside WSL (where /mnt/c/Users/<u>/AppData/Roaming/<dir> is reachable).
 	winAppDataDir string
+
+	// serverDir, when non-empty, marks this as a VS Code Server layout
+	// rooted at ~/<serverDir>/data/User/globalStorage on every OS.
+	serverDir string
 }
 
 // knownVariants lists every VS Code-family install location we probe.
 // Order is significant only insofar as the first match wins when the same
 // extension subdir exists in multiple locations (rare, but possible if a
 // user installs the extension in both Code and Code-Insiders).
+// Desktop variants come first so a real local install wins over a
+// remote-server install on the same machine.
 var knownVariants = []VSCodeVariant{
 	{Name: "vscode", macSupportDir: "Code", linuxConfigDir: "Code", winAppDataDir: "Code"},
 	{Name: "vscode-insiders", macSupportDir: "Code - Insiders", linuxConfigDir: "Code - Insiders", winAppDataDir: "Code - Insiders"},
@@ -56,6 +67,37 @@ var knownVariants = []VSCodeVariant{
 	{Name: "vscodium-insiders", macSupportDir: "VSCodium - Insiders", linuxConfigDir: "VSCodium - Insiders", winAppDataDir: "VSCodium - Insiders"},
 	{Name: "cursor", macSupportDir: "Cursor", linuxConfigDir: "Cursor", winAppDataDir: "Cursor"},
 	{Name: "windsurf", macSupportDir: "Windsurf", linuxConfigDir: "Windsurf", winAppDataDir: "Windsurf"},
+	{Name: "vscode-server", serverDir: ".vscode-server"},
+}
+
+// rootsFor returns the candidate globalStorage roots for v on the
+// running host. home must be the user's home directory; an empty home
+// yields no roots.
+func (v VSCodeVariant) rootsFor(home string) []string {
+	if home == "" {
+		return nil
+	}
+	if v.serverDir != "" {
+		return []string{filepath.Join(home, v.serverDir, "data", "User", "globalStorage")}
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return []string{filepath.Join(home, "Library", "Application Support", v.macSupportDir, "User", "globalStorage")}
+	case "linux":
+		config := filepath.Join(home, ".config")
+		if override := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); override != "" {
+			config = override
+		}
+		return []string{filepath.Join(config, v.linuxConfigDir, "User", "globalStorage")}
+	case "windows":
+		appData := strings.TrimSpace(os.Getenv("APPDATA"))
+		if appData == "" {
+			appData = filepath.Join(home, "AppData", "Roaming")
+		}
+		return []string{filepath.Join(appData, v.winAppDataDir, "User", "globalStorage")}
+	default:
+		return []string{filepath.Join(home, ".config", v.linuxConfigDir, "User", "globalStorage")}
+	}
 }
 
 // VSCodeGlobalStorageRoots returns every candidate VS Code globalStorage
@@ -70,24 +112,14 @@ func VSCodeGlobalStorageRoots() []string {
 	}
 
 	var roots []string
-	switch runtime.GOOS {
-	case "darwin":
-		appSupport := filepath.Join(home, "Library", "Application Support")
-		for _, v := range knownVariants {
-			roots = append(roots, filepath.Join(appSupport, v.macSupportDir, "User", "globalStorage"))
-		}
-	case "linux":
-		config := filepath.Join(home, ".config")
-		if override := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); override != "" {
-			config = override
-		}
-		for _, v := range knownVariants {
-			roots = append(roots, filepath.Join(config, v.linuxConfigDir, "User", "globalStorage"))
-		}
-		// WSL: probe the Windows host's AppData/Roaming. /mnt/c is the
-		// conventional Windows-drive mount; we only emit these if the
-		// mount actually exists so we don't return phantom candidates on
-		// pure Linux installs.
+	for _, v := range knownVariants {
+		roots = append(roots, v.rootsFor(home)...)
+	}
+	// WSL: probe the Windows host's AppData/Roaming. /mnt/c is the
+	// conventional Windows-drive mount; we only emit these if the
+	// mount actually exists so we don't return phantom candidates on
+	// pure Linux installs.
+	if runtime.GOOS == "linux" {
 		if mountedUsersDir := "/mnt/c/Users"; dirExists(mountedUsersDir) {
 			entries, _ := os.ReadDir(mountedUsersDir)
 			for _, entry := range entries {
@@ -103,22 +135,12 @@ func VSCodeGlobalStorageRoots() []string {
 					continue
 				}
 				for _, v := range knownVariants {
+					if v.winAppDataDir == "" {
+						continue
+					}
 					roots = append(roots, filepath.Join(appData, v.winAppDataDir, "User", "globalStorage"))
 				}
 			}
-		}
-	case "windows":
-		appData := strings.TrimSpace(os.Getenv("APPDATA"))
-		if appData == "" {
-			appData = filepath.Join(home, "AppData", "Roaming")
-		}
-		for _, v := range knownVariants {
-			roots = append(roots, filepath.Join(appData, v.winAppDataDir, "User", "globalStorage"))
-		}
-	default:
-		// Best-effort: try Linux conventions.
-		for _, v := range knownVariants {
-			roots = append(roots, filepath.Join(home, ".config", v.linuxConfigDir, "User", "globalStorage"))
 		}
 	}
 	return roots

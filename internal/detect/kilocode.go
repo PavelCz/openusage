@@ -4,13 +4,8 @@ import (
 	"log"
 
 	"github.com/janekbaraniewski/openusage/internal/core"
+	"github.com/janekbaraniewski/openusage/internal/providers/roocode"
 )
-
-// kiloCodeExtensionSubdir is the VS Code globalStorage subdirectory the
-// Kilo Code extension writes to. Kept in sync with
-// internal/providers/roocode.KiloExtensionSubdir; this detector lives
-// upstream of providers so we can't import the constant directly.
-const kiloCodeExtensionSubdir = "kilocode.kilo-code"
 
 // detectKiloCode registers a local Kilo Code account when the extension's
 // VS Code globalStorage subdirectory is present in any known VS Code
@@ -18,8 +13,8 @@ const kiloCodeExtensionSubdir = "kilocode.kilo-code"
 // yet" still counts — the provider's Fetch handles missing data
 // gracefully.
 func detectKiloCode(result *Result) {
-	tasksRoot := firstExistingExtensionTasksRoot(kiloCodeExtensionSubdir)
-	extensionDir := firstExistingExtensionDir(kiloCodeExtensionSubdir)
+	tasksRoot := firstExistingExtensionTasksRoot(roocode.KiloExtensionSubdir)
+	extensionDir := firstExistingExtensionDir(roocode.KiloExtensionSubdir)
 	if tasksRoot == "" && extensionDir == "" {
 		return
 	}

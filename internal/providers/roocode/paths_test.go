@@ -25,19 +25,23 @@ func TestVSCodeGlobalStorageRoots_ContainsKnownVariants(t *testing.T) {
 		t.Fatal("expected at least one candidate root")
 	}
 
-	// Build a needle per known variant. The path component (mac vs linux
-	// vs windows) depends on GOOS so we pick the right field by runtime.
+	// Build a needle per known variant. Server variants use the same
+	// serverDir across OSes; desktop variants pick the right per-OS field.
 	for _, v := range knownVariants {
 		var needle string
-		switch runtime.GOOS {
-		case "darwin":
-			needle = v.macSupportDir
-		case "linux":
-			needle = v.linuxConfigDir
-		case "windows":
-			needle = v.winAppDataDir
-		default:
-			needle = v.linuxConfigDir
+		if v.serverDir != "" {
+			needle = v.serverDir
+		} else {
+			switch runtime.GOOS {
+			case "darwin":
+				needle = v.macSupportDir
+			case "linux":
+				needle = v.linuxConfigDir
+			case "windows":
+				needle = v.winAppDataDir
+			default:
+				needle = v.linuxConfigDir
+			}
 		}
 		found := false
 		for _, root := range roots {
