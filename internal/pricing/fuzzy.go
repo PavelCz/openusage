@@ -78,6 +78,33 @@ var canonicalAliases = map[string]string{
 	"sonnet":            "claude-3-5-sonnet",
 	"opus":              "claude-3-opus",
 	"haiku":             "claude-3-haiku",
+
+	// thinking variants share base-model rates
+	"claude-opus-4-5-thinking":   "claude-opus-4-5",
+	"claude-sonnet-4-5-thinking": "claude-sonnet-4-5",
+	"claude-haiku-4-5-thinking":  "claude-haiku-4-5",
+	"claude-opus-4-6-thinking":   "claude-opus-4-6",
+	"claude-sonnet-4-6-thinking": "claude-sonnet-4-6",
+	"claude-haiku-4-6-thinking":  "claude-haiku-4-6",
+
+	// Anthropic vendor prefixes occasionally arrive in word-order form
+	"anthropic-claude-4-5-opus":   "claude-opus-4-5",
+	"anthropic-claude-4-5-sonnet": "claude-sonnet-4-5",
+	"anthropic-claude-4-5-haiku":  "claude-haiku-4-5",
+	"anthropic-claude-4-6-opus":   "claude-opus-4-6",
+	"anthropic-claude-4-6-sonnet": "claude-sonnet-4-6",
+	"anthropic-claude-4-6-haiku":  "claude-haiku-4-6",
+
+	// Gemini reasoning-effort tiers map to the same base rates
+	"gemini-3-pro-high":   "gemini-3-pro",
+	"gemini-3-pro-low":    "gemini-3-pro",
+	"gemini-3-1-pro-high": "gemini-3-1-pro",
+	"gemini-3-1-pro-low":  "gemini-3-1-pro",
+	"gemini-3-flash":      "gemini-3-flash-preview",
+
+	// Kimi quantisation / specific-version variants → base
+	"kimi-k2-5-nvfp4":       "kimi-k2-5",
+	"kimi-k2-instruct-0905": "kimi-k2-5",
 }
 
 // applyAlias rewrites a normalized key to its canonical form, if known.
@@ -128,19 +155,29 @@ func fuzzyCandidates(model string) []string {
 // that share the same family token (first 2 segments of the normalized
 // key). This avoids cross-family collisions like "claude" matching
 // "code-claude".
+//
+// When two candidates tie on prefix score, the entry with a higher-ranked
+// upstream namespace prefix wins (e.g. "anthropic/claude-..." beats
+// "bedrock/claude-...") so reseller listings don't override the original
+// creator's published rates.
 func bestFuzzyMatch(model string, keys []string) (string, bool) {
 	if len(keys) == 0 {
 		return "", false
 	}
-	normIdx := make(map[string]string, len(keys))
+	normIdx := make(map[string][]string, len(keys))
 	for _, k := range keys {
-		normIdx[normalizeModelKey(k)] = k
+		nk := normalizeModelKey(k)
+		normIdx[nk] = append(normIdx[nk], k)
 	}
 
 	for _, cand := range fuzzyCandidates(model) {
-		if hit, ok := normIdx[cand]; ok {
-			return hit, true
+		if hits, ok := normIdx[cand]; ok {
+			return pickPreferred(hits), true
 		}
+	}
+
+	if !isFuzzyEligible(model) {
+		return "", false
 	}
 
 	target := normalizeModelKey(model)
@@ -150,21 +187,38 @@ func bestFuzzyMatch(model string, keys []string) (string, bool) {
 	family := familyToken(target)
 	bestScore := 0
 	bestKey := ""
-	for normKey, raw := range normIdx {
+	for normKey, raws := range normIdx {
 		if familyToken(normKey) != family {
 			continue
 		}
 		score := sharedPrefixLen(target, normKey)
+		if score < bestScore {
+			continue
+		}
+		candidate := pickPreferred(raws)
 		if score > bestScore {
 			bestScore = score
-			bestKey = raw
+			bestKey = candidate
+			continue
 		}
+		bestKey = preferOriginal(bestKey, candidate)
 	}
 	// require a meaningful overlap so we don't pair unrelated families
 	if bestScore >= len(family)+2 {
 		return bestKey, true
 	}
 	return "", false
+}
+
+func pickPreferred(keys []string) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	best := keys[0]
+	for _, k := range keys[1:] {
+		best = preferOriginal(best, k)
+	}
+	return best
 }
 
 func familyToken(normalized string) string {

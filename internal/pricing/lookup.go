@@ -25,11 +25,22 @@ type Resolver struct {
 	openrouter     *OpenRouterFetcher
 	staleOnFailure bool
 
+	overrides customOverridesCache
+
 	mu             sync.Mutex
 	liteLLMTable   map[string]Price
 	openRouter     map[string]Price
 	liteLLMLoaded  bool
 	openRouterDone bool
+}
+
+// WithCustomOverrides seeds the resolver with a pre-loaded overrides table.
+// Tests use this to bypass the on-disk lookup; callers using DefaultResolver
+// or NewResolver pick the table up from disk on first Lookup.
+func WithCustomOverrides(table map[string]Price) ResolverOption {
+	return func(r *Resolver) {
+		r.overrides.once.Do(func() { r.overrides.loaded = table })
+	}
 }
 
 // ResolverOption customises Resolver behaviour.
@@ -79,6 +90,11 @@ func NewResolver(opts ...ResolverOption) (*Resolver, error) {
 func (r *Resolver) Lookup(ctx context.Context, model string, contextLen int) (*Price, error) {
 	if model == "" {
 		return nil, errors.New("pricing: empty model id")
+	}
+
+	if p, ok := lookupCustomOverride(r.overrides.get(), model); ok {
+		out := ApplyTier(p, contextLen)
+		return &out, nil
 	}
 
 	if p, ok := r.tryLiteLLM(ctx, model); ok {
