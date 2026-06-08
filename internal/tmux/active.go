@@ -143,8 +143,9 @@ func Detect(opts DetectOptions) DetectResult {
 	if ttl <= 0 {
 		ttl = defaultCacheTTL
 	}
+	cacheKey := detectCacheKey(strategies, opts)
 	if !opts.NoCache {
-		if cached, ok := readCache(opts.CachePath, opts.Now, ttl); ok {
+		if cached, ok := readCache(opts.CachePath, opts.Now, ttl, cacheKey); ok {
 			return cached
 		}
 	}
@@ -163,22 +164,22 @@ func Detect(opts DetectOptions) DetectResult {
 			continue
 		case "recency":
 			if res := detectRecency(localByID, opts); res.Primary != "" {
-				writeCache(opts.CachePath, res, opts.Now)
+				writeCache(opts.CachePath, res, opts.Now, cacheKey)
 				return res
 			}
 		case "process":
 			if res := detectProcess(opts); res.Primary != "" {
-				writeCache(opts.CachePath, res, opts.Now)
+				writeCache(opts.CachePath, res, opts.Now, cacheKey)
 				return res
 			}
 		case "priority":
 			if res := detectPriority(localByID, opts); res.Primary != "" {
-				writeCache(opts.CachePath, res, opts.Now)
+				writeCache(opts.CachePath, res, opts.Now, cacheKey)
 				return res
 			}
 		case "multi":
 			if res := detectMulti(localByID, opts); res.Primary != "" {
-				writeCache(opts.CachePath, res, opts.Now)
+				writeCache(opts.CachePath, res, opts.Now, cacheKey)
 				return res
 			}
 		}
@@ -405,7 +406,18 @@ type cacheEntry struct {
 	Primary    string    `json:"primary"`
 	Ordered    []string  `json:"ordered"`
 	Source     string    `json:"source"`
+	Key        string    `json:"key"`
 	DetectedAt time.Time `json:"detected_at"`
+}
+
+// detectCacheKey identifies the detection inputs that change the result, so a
+// cached entry produced for one configuration is not reused for another. Without
+// this, switching --strategy (or priority order / recency window) within the
+// cache TTL would return the previous configuration's answer.
+func detectCacheKey(strategies []string, opts DetectOptions) string {
+	return strings.Join(strategies, ",") + "|" +
+		opts.RecencyWindow.String() + "|" +
+		strings.Join(opts.PriorityOrder, ",")
 }
 
 func defaultCachePath() string {
@@ -416,7 +428,7 @@ func defaultCachePath() string {
 	return filepath.Join(home, ".cache", "openusage", "tmux-active.json")
 }
 
-func readCache(path string, now time.Time, ttl time.Duration) (DetectResult, bool) {
+func readCache(path string, now time.Time, ttl time.Duration, key string) (DetectResult, bool) {
 	if path == "" {
 		path = defaultCachePath()
 	}
@@ -431,6 +443,9 @@ func readCache(path string, now time.Time, ttl time.Duration) (DetectResult, boo
 	if err := json.Unmarshal(data, &entry); err != nil {
 		return DetectResult{}, false
 	}
+	if entry.Key != key {
+		return DetectResult{}, false
+	}
 	if now.Sub(entry.DetectedAt) > ttl {
 		return DetectResult{}, false
 	}
@@ -441,7 +456,7 @@ func readCache(path string, now time.Time, ttl time.Duration) (DetectResult, boo
 	}, entry.Primary != ""
 }
 
-func writeCache(path string, res DetectResult, now time.Time) {
+func writeCache(path string, res DetectResult, now time.Time, key string) {
 	if path == "" {
 		path = defaultCachePath()
 	}
@@ -455,6 +470,7 @@ func writeCache(path string, res DetectResult, now time.Time) {
 		Primary:    res.Primary,
 		Ordered:    res.Ordered,
 		Source:     res.Source,
+		Key:        key,
 		DetectedAt: now,
 	}
 	data, err := json.Marshal(entry)

@@ -223,6 +223,9 @@ var itermNormalFontRe = regexp.MustCompile(`"Normal Font"\s*=\s*"([^"]+)"`)
 // itermNormalFontPSName returns the PostScript name of iTerm2's configured
 // Normal Font (the value is "<postscript-name> <size>"), or "".
 func itermNormalFontPSName() string {
+	if runtime.GOOS != "darwin" {
+		return ""
+	}
 	out, err := exec.Command("defaults", "read", "com.googlecode.iterm2", "New Bookmarks").Output()
 	if err != nil {
 		return ""

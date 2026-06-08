@@ -887,15 +887,6 @@ func orString(values ...string) string {
 	return ""
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
-}
-
 func parseDurationOr(s string, fallback time.Duration) time.Duration {
 	if s == "" {
 		return fallback
@@ -907,15 +898,12 @@ func parseDurationOr(s string, fallback time.Duration) time.Duration {
 	return d
 }
 
-// isStdoutTerminal reports whether stdout is connected to a TTY. Used by the
-// smart-hint behavior so users running `openusage tmux` interactively (no
-// flags, not inside tmux) get a friendly install pointer instead of a
-// tmux-format string. The os.ModeCharDevice check mirrors the convention
-// used by spinner.go and statusline.go.
+// isStdoutTerminal reports whether stdout is a real interactive terminal. Used
+// by the smart-hint behavior so users running `openusage tmux` interactively
+// (no flags, not inside tmux) get a friendly install pointer instead of a
+// tmux-format string. Uses term.IsTerminal (a real TTY ioctl) for consistency
+// with isStdinTerminal — an os.ModeCharDevice check would wrongly treat
+// /dev/null as a terminal.
 func isStdoutTerminal() bool {
-	info, err := os.Stdout.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
+	return term.IsTerminal(int(os.Stdout.Fd()))
 }

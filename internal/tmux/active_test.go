@@ -219,8 +219,9 @@ func TestDetectCacheRoundTrip(t *testing.T) {
 	// Cache was populated only if the strategy path wrote it. Pinned bypasses
 	// cache writes by design (it is already O(0)); manually exercise the
 	// cache helpers to verify the round-trip works.
-	writeCache(cachePath, DetectResult{Primary: "codex", Ordered: []string{"codex"}, Source: "recency"}, now)
-	cached, ok := readCache(cachePath, now, defaultCacheTTL)
+	const ck = "recency,priority|4h0m0s|"
+	writeCache(cachePath, DetectResult{Primary: "codex", Ordered: []string{"codex"}, Source: "recency"}, now, ck)
+	cached, ok := readCache(cachePath, now, defaultCacheTTL, ck)
 	if !ok {
 		t.Fatalf("expected cache hit")
 	}
@@ -228,8 +229,13 @@ func TestDetectCacheRoundTrip(t *testing.T) {
 		t.Fatalf("cache returned wrong primary: %q", cached.Primary)
 	}
 
+	// A different cache key (e.g. a different --strategy) must miss.
+	if _, ok := readCache(cachePath, now, defaultCacheTTL, "process|4h0m0s|"); ok {
+		t.Fatalf("cache should miss when the detection key differs")
+	}
+
 	// Past TTL the cache should miss.
-	_, ok = readCache(cachePath, now.Add(defaultCacheTTL+time.Second), defaultCacheTTL)
+	_, ok = readCache(cachePath, now.Add(defaultCacheTTL+time.Second), defaultCacheTTL, ck)
 	if ok {
 		t.Fatalf("cache should have expired after TTL")
 	}

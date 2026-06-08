@@ -238,7 +238,16 @@ func ProviderIcon(provider string, tier GlyphTier) string {
 	if g, ok := tbl[p]; ok && g != "" {
 		return g
 	}
-	return tbl["*"]
+	if g := tbl["*"]; g != "" {
+		return g
+	}
+	// The tier has no glyph for this provider and no usable "*" fallback (the
+	// nerdfont tier currently ships empty placeholders). Degrade to unicode so
+	// the segment is never blank.
+	if tier != GlyphTierUnicode {
+		return ProviderIcon(p, GlyphTierUnicode)
+	}
+	return ""
 }
 
 // barGlyphs returns the (filled, empty) cell glyphs used by the `:bar`
