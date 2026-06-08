@@ -60,7 +60,7 @@ def choose_advance(font, upem):
 
 # Cap horizontal growth: tall logos may exceed the advance, but never by more
 # than this factor, to avoid heavy overlap into neighboring cells.
-MAX_WIDTH_FACTOR = 1.8
+MAX_WIDTH_FACTOR = 2.0
 
 
 def add_unique_name(order_set, base_name):
