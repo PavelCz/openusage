@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/samber/lo"
 )
 
 func TestAssembleTemplate(t *testing.T) {
@@ -147,5 +149,75 @@ func TestOrStringPicksFirstNonEmpty(t *testing.T) {
 	}
 	if v := orString("", ""); v != "" {
 		t.Fatalf("orString = %q, want empty", v)
+	}
+}
+
+func TestConfiguratorDefaultChoices(t *testing.T) {
+	ch := newConfiguratorModel().choices()
+	if ch.position != "right" {
+		t.Errorf("default position = %q, want right", ch.position)
+	}
+	if ch.mode != "dynamic" {
+		t.Errorf("default mode = %q, want dynamic", ch.mode)
+	}
+	// Default components are icon + block + today, in canonical order.
+	if got := assembleTemplate(ch.components); !strings.HasPrefix(got, "{tool:icon:brand}") {
+		t.Errorf("default template = %q, want icon first", got)
+	}
+	if err := validateTemplate(assembleTemplate(ch.components)); err != nil {
+		t.Errorf("default template invalid: %v", err)
+	}
+	// Dynamic mode pins no provider.
+	if got := ch.providersForMode(); got != nil {
+		t.Errorf("dynamic providersForMode = %v, want nil", got)
+	}
+}
+
+func TestConfiguratorModeSwitchingRebuildsRows(t *testing.T) {
+	m := newConfiguratorModel()
+	base := len(m.rows)
+
+	// Switch to "several": one toggle row per provider appears.
+	m.modeIdx = lo.IndexOf(cfgModes, "several")
+	m.rebuildRows()
+	if len(m.rows) <= base {
+		t.Fatalf("several mode should add provider rows: base=%d now=%d", base, len(m.rows))
+	}
+	nProviders := lo.CountBy(m.rows, func(r cfgRow) bool { return r.kind == rowProviderToggle })
+	if nProviders != len(m.provIDs) {
+		t.Fatalf("several mode = %d provider rows, want %d", nProviders, len(m.provIDs))
+	}
+
+	// "pinned" mode adds a single cycle row for the pinned tool, not per-provider toggles.
+	m.modeIdx = lo.IndexOf(cfgModes, "pinned")
+	m.rebuildRows()
+	if lo.CountBy(m.rows, func(r cfgRow) bool { return r.kind == rowProviderToggle }) != 0 {
+		t.Fatalf("pinned mode should have no provider toggle rows")
+	}
+}
+
+func TestConfiguratorProvidersForMode(t *testing.T) {
+	pinned := tmuxChoices{mode: "pinned", pinned: "cursor"}
+	if got := pinned.providersForMode(); len(got) != 1 || got[0] != "cursor" {
+		t.Errorf("pinned providersForMode = %v, want [cursor]", got)
+	}
+	several := tmuxChoices{mode: "several", several: []string{"claude_code", "codex"}}
+	if got := several.providersForMode(); len(got) != 2 {
+		t.Errorf("several providersForMode = %v, want 2", got)
+	}
+}
+
+func TestConfiguratorPreviewRenders(t *testing.T) {
+	m := newConfiguratorModel()
+	// Dynamic preview is a single claude_code segment.
+	if out := m.preview(); strings.TrimSpace(out) == "" {
+		t.Fatal("dynamic preview is empty")
+	}
+	// Several preview with two tools is joined by the separator.
+	m.modeIdx = lo.IndexOf(cfgModes, "several")
+	m.several = map[string]bool{"claude_code": true, "cursor": true}
+	m.rebuildRows()
+	if out := m.preview(); !strings.Contains(out, "│") {
+		t.Errorf("several preview should join segments with separator, got %q", out)
 	}
 }

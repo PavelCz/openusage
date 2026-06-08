@@ -80,10 +80,10 @@ Remote API platforms (OpenAI, Anthropic, OpenRouter, …) appear in the periodic
 
 ### Add to tmux
 
-Show your Claude Code, Codex, Cursor, Copilot, and OpenRouter usage — cost, quota, burn rate, and the active tool — right in your **tmux status bar**. Run the interactive installer (position, preset, optional real provider icons), then reload tmux:
+Show your Claude Code, Codex, Cursor, Copilot, and OpenRouter usage — cost, quota, burn rate, and the active tool — right in your **tmux status bar**. Run the interactive installer — one screen with a live preview where you pick position, which tool(s), the segment components, and emoji vs. real provider icons — then reload tmux:
 
 ```bash
-openusage tmux install                         # interactive wizard: position, preset, icons
+openusage tmux install                         # interactive: live-preview configurator
 tmux source-file ~/.config/tmux/tmux.conf      # reload
 ```
 

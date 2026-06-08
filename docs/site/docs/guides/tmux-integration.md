@@ -39,15 +39,19 @@ Just run the wizard — it's the one-stop setup:
 openusage tmux install
 ```
 
-On an interactive terminal this opens a small form to choose your **status bar
-position**, **which tool(s) to show** (auto-detect the active tool, pin one, or
-show several side by side — one pinned segment each), the **preset** (or
-**Custom**, which opens a component builder with a live preview), and whether to
-use **emoji or real provider icons**. It then does everything for you: writes the
-tmux.conf snippet (one `#(openusage tmux --provider …)` segment per pinned tool),
-saves a custom template to `settings.tmux.format` if you built one, and (if you
-pick real icons) installs the icon font and configures your terminal. Reload tmux
-with the printed `tmux source-file` command and you're done.
+On an interactive terminal this opens a single-screen configurator with a **live
+preview on top** that updates as you change anything — so you decide by seeing the
+result, not by committing to choices up front. On one screen you set the **status
+bar position**, **which tool(s) to show** (auto-detect the active tool, pin one,
+or tick several to show side by side — one pinned segment each), toggle the
+**segment components** (icon, model, 5h block, plan %, context %, today's cost,
+block cost, burn rate), and choose **emoji or real provider icons**. Move with
+↑/↓, change a setting with ←/→, toggle a checkbox with space, then press enter on
+**Apply**. It then does everything for you: writes the tmux.conf snippet (one
+`#(openusage tmux --provider …)` segment per pinned tool), saves your assembled
+template to `settings.tmux.format`, and (if you pick real icons) installs the icon
+font and configures your terminal. Reload tmux with the printed `tmux source-file`
+command and you're done.
 
 For scripting, pass flags (or run with a non-interactive stdin) to skip the
 wizard and apply directly:
