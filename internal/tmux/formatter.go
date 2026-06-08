@@ -153,6 +153,7 @@ var modifierArity = map[string]int{
 	"short":    0,
 	"long":     0,
 	"color":    0,
+	"brand":    0,
 	"icon":     0,
 	"tokens":   0,
 	"duration": 0,
@@ -315,6 +316,13 @@ func (r *renderer) applyModifier(varName, value, op string, args []string) (stri
 		return modBar(value, arg0, r.ctx.Glyphs), nil
 	case "color":
 		return modColor(varName, value, r.ctx), nil
+	case "brand":
+		// Tint the value with the active provider's brand color (icons are
+		// monochrome glyphs that otherwise inherit the text color).
+		if hex := ProviderBrandColor(r.ctx.Provider); hex != "" {
+			return Emit(value, hex, "", r.ctx.ColorMode), nil
+		}
+		return value, nil
 	case "icon":
 		return ProviderIcon(value, r.ctx.Glyphs), nil
 	case "tokens":

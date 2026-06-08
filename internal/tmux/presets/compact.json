@@ -1,7 +1,7 @@
 {
   "name": "compact",
   "description": "Provider icon, labeled primary gauge (5h block for Claude Code, plan for Cursor/Codex), and today's cost. Default preset.",
-  "format": "{tool:icon}{?block_pct: 5h {block_pct:pct:color}}{?plan_pct: plan {plan_pct:pct:color}}{?today_cost: {today_cost:money}/today}",
+  "format": "{tool:icon:brand}{?block_pct: 5h {block_pct:pct:color}}{?plan_pct: plan {plan_pct:pct:color}}{?today_cost: {today_cost:money}/today}",
   "glyphs": "unicode",
   "sample": "🤖 5h 15% $6.79/today"
 }

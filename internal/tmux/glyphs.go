@@ -243,6 +243,37 @@ func ProviderIcon(provider string, tier GlyphTier) string {
 	return ""
 }
 
+// providerBrandColors maps a provider ID to its brand hex color, used by the
+// `:brand` modifier to tint the icon (font glyphs are monochrome and otherwise
+// render in the surrounding text color). Approximate brand colors; unmapped
+// providers return "" (no tint).
+var providerBrandColors = map[string]string{
+	"claude_code":   "#D97757", // Anthropic coral/orange
+	"anthropic":     "#D97757",
+	"codex":         "#10A37F", // OpenAI green
+	"openai":        "#10A37F",
+	"cursor":        "#9CA3AF",
+	"copilot":       "#8957E5", // GitHub purple
+	"gemini_cli":    "#4285F4", // Google blue
+	"gemini_api":    "#4285F4",
+	"openrouter":    "#6467F2",
+	"ollama":        "#C7C7C7",
+	"groq":          "#F55036",
+	"mistral":       "#FA520F", // Mistral orange
+	"deepseek":      "#4D6BFE",
+	"xai":           "#9CA3AF",
+	"perplexity":    "#20B8CD",
+	"zai":           "#5B8DEF",
+	"moonshot":      "#6B7CFF",
+	"alibaba_cloud": "#FF6A00",
+}
+
+// ProviderBrandColor returns the brand hex color for a provider, or "" when
+// none is defined.
+func ProviderBrandColor(provider string) string {
+	return providerBrandColors[strings.ToLower(strings.TrimSpace(provider))]
+}
+
 // barGlyphs returns the (filled, empty) cell glyphs used by the `:bar`
 // modifier for a given tier. ASCII uses `#` and `.` so output remains safe in
 // terminals without unicode; unicode uses heavy-shade blocks; nerdfont uses
