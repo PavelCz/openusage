@@ -237,14 +237,114 @@ func pruneBreakdownsForWindow(snap *core.UsageSnapshot, window core.TimeWindow) 
 	if keep <= 0 {
 		return
 	}
-	for _, prefix := range []string{"model_", "client_", "provider_"} {
+	// Entity-group dimensions: "<prefix><entity>_<suffix>" (Model Burn, Clients,
+	// Provider Burn, Project Breakdown).
+	for _, prefix := range []string{"model_", "client_", "provider_", "project_"} {
 		for e := range pruneEntityMetrics(snap.Metrics, prefix, keep) {
 			// Drop the matching daily series so trends/"N more" stay consistent.
 			delete(snap.DailySeries, "tokens_"+prefix+e)
 			delete(snap.DailySeries, "usage_"+prefix+e)
 		}
 	}
+	// Flat language metrics (lang_<name>).
 	pruneFlatMetrics(snap.Metrics, "lang_", keep)
+	// Tool Usage (flat tool_<name>, ignoring aggregates / window variants / MCP).
+	pruneToolMetrics(snap.Metrics, keep)
+	// MCP Usage, grouped by server (mcp_<server>_<tool>).
+	for s := range pruneMCPServers(snap.Metrics, keep) {
+		delete(snap.DailySeries, "usage_mcp_"+s)
+	}
+}
+
+// toolAggregateKeys are tool_* metrics that are totals/metadata, not per-tool
+// breakdown entries, so they are never pruned as entities.
+var toolAggregateKeys = map[string]bool{
+	"tool_calls_total": true, "tool_completed": true, "tool_errored": true,
+	"tool_cancelled": true, "tool_success_rate": true, "tool_count": true,
+	"tool_calls_today": true, "tool_usage": true, "tool_usage_source": true,
+}
+
+var windowVariantSuffixes = []string{"_today", "_1d", "_7d", "_30d"}
+
+func trimWindowVariant(s string) string {
+	for _, suf := range windowVariantSuffixes {
+		if strings.HasSuffix(s, suf) {
+			return strings.TrimSuffix(s, suf)
+		}
+	}
+	return s
+}
+
+// pruneToolMetrics keeps the top `keep` real tools (by call count) and deletes
+// the rest. Aggregates, MCP tools, and per-window variants are grouped onto
+// their base tool so a tool and its "_today" companion are dropped together.
+func pruneToolMetrics(metrics map[string]core.Metric, keep int) {
+	keysByTool := map[string][]string{}
+	rank := map[string]float64{}
+	for k, m := range metrics {
+		if !strings.HasPrefix(k, "tool_") || toolAggregateKeys[k] {
+			continue
+		}
+		name := strings.TrimPrefix(k, "tool_")
+		if core.IsMCPToolMetricName(name) {
+			continue
+		}
+		entity := trimWindowVariant(name)
+		if entity == "" {
+			continue
+		}
+		keysByTool[entity] = append(keysByTool[entity], k)
+		if m.Used != nil && name == entity && *m.Used > rank[entity] {
+			rank[entity] = *m.Used // rank by the base (non-window) value
+		}
+	}
+	dropEntities(metrics, keysByTool, rank, keep)
+}
+
+// pruneMCPServers keeps the top `keep` MCP servers (by total calls) and deletes
+// the rest's metrics, returning the set of dropped server names.
+func pruneMCPServers(metrics map[string]core.Metric, keep int) map[string]bool {
+	keysByServer := map[string][]string{}
+	rank := map[string]float64{}
+	for k, m := range metrics {
+		if !strings.HasPrefix(k, "mcp_") {
+			continue
+		}
+		rest := strings.TrimPrefix(k, "mcp_")
+		if rest == "servers_active" || rest == "" {
+			continue // aggregate
+		}
+		server := rest
+		if i := strings.IndexByte(rest, '_'); i > 0 {
+			server = rest[:i]
+		}
+		keysByServer[server] = append(keysByServer[server], k)
+		if m.Used != nil && rest == server+"_total" && *m.Used > rank[server] {
+			rank[server] = *m.Used
+		}
+	}
+	return dropEntities(metrics, keysByServer, rank, keep)
+}
+
+// dropEntities keeps the top `keep` entities by rank and deletes the rest's
+// keys from metrics, returning the dropped entity set.
+func dropEntities(metrics map[string]core.Metric, keysByEntity map[string][]string, rank map[string]float64, keep int) map[string]bool {
+	if len(keysByEntity) <= keep {
+		return nil
+	}
+	ents := make([]string, 0, len(keysByEntity))
+	for e := range keysByEntity {
+		ents = append(ents, e)
+	}
+	sort.SliceStable(ents, func(i, j int) bool { return rank[ents[i]] > rank[ents[j]] })
+	dropped := map[string]bool{}
+	for _, e := range ents[keep:] {
+		dropped[e] = true
+		for _, k := range keysByEntity[e] {
+			delete(metrics, k)
+		}
+	}
+	return dropped
 }
 
 // pruneEntityMetrics keeps the top `keep` entities under `prefix` (by cost) and
@@ -278,28 +378,16 @@ func pruneEntityMetrics(metrics map[string]core.Metric, prefix string, keep int)
 			}
 		}
 	}
-	if len(keysByEntity) <= keep {
-		return nil
-	}
-	rank := func(e string) float64 {
-		if c, ok := cost[e]; ok {
-			return c + 1e12 // entities with a cost metric always rank first
-		}
-		return alt[e]
-	}
-	ents := make([]string, 0, len(keysByEntity))
+	// Rank by cost; entities with a cost metric always outrank those without.
+	rank := make(map[string]float64, len(keysByEntity))
 	for e := range keysByEntity {
-		ents = append(ents, e)
-	}
-	sort.SliceStable(ents, func(i, j int) bool { return rank(ents[i]) > rank(ents[j]) })
-	dropped := map[string]bool{}
-	for _, e := range ents[keep:] {
-		dropped[e] = true
-		for _, k := range keysByEntity[e] {
-			delete(metrics, k)
+		if c, ok := cost[e]; ok {
+			rank[e] = c + 1e12
+		} else {
+			rank[e] = alt[e]
 		}
 	}
-	return dropped
+	return dropEntities(metrics, keysByEntity, rank, keep)
 }
 
 // pruneFlatMetrics keeps the top `keep` flat metrics under `prefix` (e.g. the
