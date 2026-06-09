@@ -379,17 +379,17 @@ func TestBuildDemoSnapshots_RichProviderDetails(t *testing.T) {
 			},
 		},
 		"openrouter": {
+			// OpenRouter (an API router) has model, client (app), and provider
+			// breakdowns, but no per-tool or per-language telemetry — so no
+			// lang_*/tool_* metrics here.
 			metrics: []string{
 				"analytics_7d_tokens",
 				"model_qwen_qwen3-coder-flash_cost_usd",
 				"client_recipe_blog_total_tokens",
-				"lang_code",
-				"tool_calls_total",
+				"provider_alibaba_cost_usd",
 			},
 			raw: []string{
 				"client_usage",
-				"tool_usage",
-				"language_usage",
 			},
 			series: []string{
 				"analytics_tokens",

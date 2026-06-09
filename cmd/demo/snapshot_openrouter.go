@@ -165,19 +165,10 @@ func buildOpenRouterDemoSnapshot(now time.Time) core.UsageSnapshot {
 			"client_garden_planner_total_tokens":      {Used: ptr(2000000), Unit: "tokens", Window: "30d"},
 			"client_garden_planner_requests":          {Used: ptr(59), Unit: "requests", Window: "30d"},
 			"client_garden_planner_cost_usd":          {Used: ptr(1.08), Unit: "USD", Window: "30d"},
-			"lang_general":                            {Used: ptr(275), Unit: "requests", Window: "30d inferred"},
-			"lang_code":                               {Used: ptr(189), Unit: "requests", Window: "30d inferred"},
-			"lang_reasoning":                          {Used: ptr(64), Unit: "requests", Window: "30d inferred"},
-			"lang_multimodal":                         {Used: ptr(29), Unit: "requests", Window: "30d inferred"},
-			"tool_qwen_qwen3-coder-flash":             {Used: ptr(189), Unit: "calls", Window: "30d inferred"},
-			"tool_moonshotai_kimi-k2-5":               {Used: ptr(126), Unit: "calls", Window: "30d inferred"},
-			"tool_nvidia_nemotron-nano-9b-v2":         {Used: ptr(78), Unit: "calls", Window: "30d inferred"},
-			"tool_deepseek_deepseek-v3-2":             {Used: ptr(49), Unit: "calls", Window: "30d inferred"},
-			"tool_openai_gpt-o4s-r1203":               {Used: ptr(22), Unit: "calls", Window: "30d inferred"},
-			"tool_calls_total":                        {Used: ptr(464), Unit: "calls", Window: "30d"},
-			"tool_completed":                          {Used: ptr(446), Unit: "calls", Window: "30d"},
-			"tool_cancelled":                          {Used: ptr(18), Unit: "calls", Window: "30d"},
-			"tool_success_rate":                       {Used: ptr(96.1), Unit: "%", Window: "30d"},
+			// OpenRouter is an API router: it reports spend, tokens, models, and
+			// upstream providers, but has no per-tool or per-language telemetry —
+			// those come from coding-agent logs (Claude Code, Codex, …). Don't
+			// fabricate Tool Usage / Language breakdowns here.
 			"analytics_7d_requests": {
 				Used: ptr(464), Unit: "requests", Window: "7d",
 			},
@@ -212,10 +203,6 @@ func buildOpenRouterDemoSnapshot(now time.Time) core.UsageSnapshot {
 			"model_usage":           "qwen qwen3 coder flash: 37%, moonshotai kimi k2 5: 28%, nvidia nemotron nano 9b v2: 18%, deepseek deepseek v3 2: 12%, openai gpt o4s r1203: 5%",
 			"model_usage_window":    "30d",
 			"client_usage":          "recipe_blog: 40%, expense_tracker: 29%, workout_log: 18%, garden_planner: 13%",
-			"tool_usage":            "qwen/qwen3-coder-flash: 189 calls, moonshotai/kimi-k2-5: 126 calls, nvidia/nemotron-nano-9b-v2: 78 calls, deepseek/deepseek-v3-2: 49 calls, openai/gpt-o4s-r1203: 22 calls",
-			"tool_usage_source":     "inferred_from_model_requests",
-			"language_usage":        "general: 275 req, code: 189 req, reasoning: 64 req, multimodal: 29 req",
-			"language_usage_source": "inferred_from_model_ids",
 			"generations_fetched":   "464",
 		},
 		ModelUsage: []core.ModelUsageRecord{
