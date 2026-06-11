@@ -337,9 +337,14 @@ func normalizeDataConfig(in DataConfig) DataConfig {
 		core.Tracef("config: retention_days=%d is invalid, using default 30", retention)
 		retention = 30
 	}
-	if retention > 90 {
-		core.Tracef("config: retention_days=%d exceeds maximum 90, clamping to 90", retention)
-		retention = 90
+	// Upper bound only guards against absurd values; it is deliberately large so
+	// users who want to keep long history can (downsampling, not a hard 90-day
+	// wall, is the intended way to manage size). The previous 90-day cap meant
+	// retention silently discarded everything older than a quarter.
+	const maxRetentionDays = 3650 // ~10 years
+	if retention > maxRetentionDays {
+		core.Tracef("config: retention_days=%d exceeds maximum %d, clamping", retention, maxRetentionDays)
+		retention = maxRetentionDays
 	}
 	if tw.Days() > retention {
 		newTW := core.LargestWindowFitting(retention)

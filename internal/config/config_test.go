@@ -170,9 +170,15 @@ func TestLoadFrom_NegativeThresholdsGetDefaults(t *testing.T) {
 }
 
 func TestLoadFrom_RetentionDaysExceedingMaxClamped(t *testing.T) {
+	// Long retention is allowed (downsampling, not a hard cap, manages size);
+	// only absurd values are clamped to the ~10y ceiling.
 	cfg := loadConfigJSON(t, `{"data":{"retention_days":200}}`)
-	if cfg.Data.RetentionDays != 90 {
-		t.Errorf("retention_days = %d, want 90 (clamped from 200)", cfg.Data.RetentionDays)
+	if cfg.Data.RetentionDays != 200 {
+		t.Errorf("retention_days = %d, want 200 (kept; under the ceiling)", cfg.Data.RetentionDays)
+	}
+	cfg = loadConfigJSON(t, `{"data":{"retention_days":99999}}`)
+	if cfg.Data.RetentionDays != 3650 {
+		t.Errorf("retention_days = %d, want 3650 (clamped from 99999)", cfg.Data.RetentionDays)
 	}
 }
 
