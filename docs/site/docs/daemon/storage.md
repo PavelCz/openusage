@@ -104,12 +104,27 @@ Hard-stuck spool files (corrupt JSON, repeated dedup misses) remain on disk unti
 
 ## Retention
 
-Configured under `data.retention_days` in settings.json (default `30`). Two prune jobs run inside the daemon:
+Configured under `data.retention_days` in settings.json (default `30`). The
+daemon keeps the database bounded to this window from both ends — it stops old
+data coming in and prunes old data already stored:
 
-- `PruneOldEvents` — deletes rows from `usage_events` older than the window.
-- `PruneRawEventPayloads` — deletes the heavier blob in `raw_events` older than the window, keeping the row for traceability if needed.
+- **Ingest floor** — collected events whose timestamp is older than the
+  retention window are dropped before they are written. This matters for
+  local-file providers (codex, opencode, and other tools whose session logs
+  carry their full history): without the floor, every collect cycle would
+  re-import months of old-dated events and fight the pruner. A direct
+  consequence is that **history is bounded by `retention_days` even for local
+  sources** — raising the window later does not recover events already dropped.
+- `PruneOldEvents` — deletes rows from `usage_events` older than the window, in
+  bounded batches so a large backlog (for example, one accumulated while the
+  daemon was unstable) always makes progress instead of timing out. It runs at
+  startup, then on a tight catch-up cadence until the backlog is drained and a
+  relaxed cadence afterward.
+- `PruneRawEventPayloads` — clears the heavier payload blob from old raw events,
+  keeping the row for traceability.
 
-Both run on startup and on a periodic timer. After a long downtime, expect the first cycle to take longer.
+After a long downtime, expect the first cycles to clear a backlog before the
+database settles to its steady-state size.
 
 ```json
 {
@@ -138,11 +153,13 @@ sqlite3 ~/.local/state/openusage/telemetry.db ".backup '/path/to/backup.db'"
 On detected corruption (failed page checksum, unreadable header), the daemon:
 
 1. Closes the bad handle.
-2. Renames the file to `telemetry.db.corrupt.{unix-ts}`.
+2. Renames the file to `telemetry.db.corrupt.{timestamp}`.
 3. Removes orphaned `-shm` and `-wal` files.
 4. Reinitializes a fresh `telemetry.db`.
 
-Hooks fired during this window go to the spool and drain into the new DB on next pipeline cycle. The corrupt copy is left in place — delete it once you've confirmed nothing useful remains.
+Hooks fired during this window go to the spool and drain into the new DB on next pipeline cycle. Only the **most recent** corrupt copy is kept for forensics; older `telemetry.db.corrupt.*` snapshots are removed automatically on startup so they cannot accumulate on disk.
+
+To reduce the chance of corruption in the first place, read paths (the dashboard read model) open the database **read-only**: a reader can never modify — and therefore never corrupt — the writer's file, and its queries do not take the write lock or contend with the daemon's writes.
 
 ## Manual cleanup
 
