@@ -55,6 +55,14 @@ func TestPruneOldEventsBatchedRemovesBacklog(t *testing.T) {
 	}
 	defer db.Close()
 
+	// Use the same WAL + single-connection setup the production store uses.
+	// Without it the bulk insert below runs as thousands of FULL-synced
+	// auto-commit transactions, which on Windows is slow enough to blow the
+	// package test timeout.
+	if err := configureSQLiteConnection(db); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+
 	store := NewStore(db)
 	if err := store.Init(context.Background()); err != nil {
 		t.Fatalf("init: %v", err)
@@ -64,20 +72,30 @@ func TestPruneOldEventsBatchedRemovesBacklog(t *testing.T) {
 	// across "old" (beyond retention) and "recent" (within retention).
 	const oldCount = pruneEventsBatch + 1500
 	const recentCount = 50
+	// Batch every insert into a single transaction. The prune logic under test
+	// is unaffected by how rows arrive, and one commit instead of ~2n keeps the
+	// test fast and deadlock-free across platforms.
 	insert := func(n int, occurredAt time.Time) {
+		tx, err := db.Begin()
+		if err != nil {
+			t.Fatalf("begin tx: %v", err)
+		}
 		for i := 0; i < n; i++ {
 			id := fmt.Sprintf("%s-%d", occurredAt.Format("20060102"), i)
 			ts := occurredAt.Format(time.RFC3339Nano)
-			if _, err := db.Exec(`INSERT INTO usage_raw_events
+			if _, err := tx.Exec(`INSERT INTO usage_raw_events
 				(raw_event_id, ingested_at, source_system, source_channel, source_schema_version, source_payload, source_payload_hash)
 				VALUES (?, ?, 'test', 'api', 'v1', '{}', ?)`, id, ts, id); err != nil {
 				t.Fatalf("insert raw: %v", err)
 			}
-			if _, err := db.Exec(`INSERT INTO usage_events
+			if _, err := tx.Exec(`INSERT INTO usage_events
 				(event_id, occurred_at, provider_id, account_id, agent_name, event_type, status, dedup_key, raw_event_id, normalization_version)
 				VALUES (?, ?, 'p', 'a', 'test', 'tool_usage', 'ok', ?, ?, 'v1')`, id, ts, id, id); err != nil {
 				t.Fatalf("insert event: %v", err)
 			}
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit tx: %v", err)
 		}
 	}
 	insert(oldCount, time.Now().Add(-90*24*time.Hour))
