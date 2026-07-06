@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.23.1](https://github.com/janekbaraniewski/openusage/compare/v0.23.0...v0.23.1) (2026-07-06)
+
+
+### Dependencies
+
+* **deps:** bump github.com/klauspost/compress from 1.18.6 to 1.19.0 in the go-minor-and-patch group ([#244](https://github.com/janekbaraniewski/openusage/issues/244)) ([ce37d1a](https://github.com/janekbaraniewski/openusage/commit/ce37d1a71ca1791265673b8c5c5c9cbb444dbec3))
+* **docs:** bump posthog-js from 1.396.0 to 1.396.7 in /docs/site in the docs-minor-and-patch group ([#245](https://github.com/janekbaraniewski/openusage/issues/245)) ([fd8d37d](https://github.com/janekbaraniewski/openusage/commit/fd8d37d4d8b2f22f1e7cd05db506fc88fb50a53f))
+* **website:** bump the website-minor-and-patch group in /website with 3 updates ([#246](https://github.com/janekbaraniewski/openusage/issues/246)) ([4701ae4](https://github.com/janekbaraniewski/openusage/commit/4701ae4ea1e615852c3a9bfb2b87d3b22528ca09))
+
 ## [0.23.0](https://github.com/janekbaraniewski/openusage/compare/v0.22.0...v0.23.0) (2026-07-05)
 
 
