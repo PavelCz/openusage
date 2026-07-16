@@ -33,8 +33,10 @@ var errLiveUsageAuth = errors.New("live usage auth failed")
 
 type Provider struct {
 	providerbase.Base
-	telemetryCacheMu sync.Mutex
-	telemetryCache   map[string]*telemetryCacheEntry
+	telemetryCacheMu    sync.Mutex
+	telemetryCache      map[string]*telemetryCacheEntry
+	sessionUsageCacheMu sync.Mutex
+	sessionUsageCache   map[string]*sessionUsageCacheEntry
 }
 
 type telemetryCacheEntry struct {
