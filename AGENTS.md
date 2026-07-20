@@ -46,6 +46,15 @@ make deps                     # go mod download && go mod verify
 make tidy                     # go mod tidy
 ```
 
+## Resource Usage
+
+- Never run CPU-intensive build, test, vet, or lint commands concurrently.
+- Run validation commands sequentially.
+- For Go operations, set `GOMAXPROCS=4`.
+- Use `go build -p=4`, `go test -p=4 -parallel=4`, and equivalent limits for other Go commands.
+- When practical, run the full sequential validation sequence in one user systemd scope with `CPUQuota=400%`, ensuring the quota covers all child compiler processes.
+- Do not start or restart background daemons unless the user explicitly requests it.
+
 ## Current Structure
 
 ```text

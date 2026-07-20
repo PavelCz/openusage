@@ -1,37 +1,41 @@
 # Daemon Power Optimization V2 Design
 
-Date: 2026-04-09
+Date: 2026-04-09 (extended 2026-07-20)
 Status: Implemented
 Author: janekbaraniewski
 
 ## 1. Problem Statement
 
-The daemon burns 141% CPU during active Claude Code use because the Collect loop re-parses ALL 886 JSONL files every 20 seconds with zero caching, duplicating work the Poll loop already does with a file-level cache — and there is no adaptive backoff on the Collect loop.
+The daemon has shown sustained CPU usage around 43%, with bursts above one core and roughly 15 MiB/s of writes. The JSONL caches and adaptive backoff reduced some work, but every collection cycle still creates fresh provider instances. That discards provider-local cursors, makes all sources replay history, and prevents the empty-cycle backoff from activating. Cursor is the largest current contributor: its SQLite collector repeatedly scans and emits historical tracking and mutable state records, while telemetry ingestion opens a transaction and updates duplicate rows even when no canonical field changed.
 
 ## 2. Goals
 
 1. Add mtime+size caching to the Collect path so unchanged JSONL files are never re-parsed.
 2. Add adaptive backoff to the Collect loop (same pattern as PollScheduler) so it backs off when no new events are found.
 3. Add incremental JSONL parsing so only new lines (appended since last read) are parsed, avoiding full-file re-reads of active conversation files.
+4. Preserve telemetry source instances for the daemon lifetime so source-local cursors and caches survive collection cycles.
+5. Make Cursor telemetry collection delta-producing: append-only tracking rows use a high-water mark, while mutable state rows use database change detection plus stable key/value fingerprints.
+6. Skip SQLite updates for duplicate events whose merged canonical representation is unchanged.
 
 ## 3. Non-Goals
 
 1. Merging Poll and Collect into a single loop (architectural change, separate design).
 2. fsnotify-based event-driven collection (adds external dependency, separate design).
 3. Incremental read model queries (large refactor, separate design).
-4. Changes to non-JSONL providers (Cursor SQLite, Copilot CLI — already optimized).
+4. Batching multiple telemetry events into one SQLite transaction. This remains a follow-up after eliminating repeated events and unchanged updates.
+5. Persisting collector cursors across daemon restarts. A restart intentionally performs a complete correctness-preserving bootstrap import.
 
 ## 4. Impact Analysis
 
 | Subsystem | Impact | Summary |
 |-----------|--------|---------|
 | core types | none | No changes |
-| providers | moderate | Claude Code + Codex `Collect()` use cached parsing; `shared.CollectFilesByExt` replaced with stat-aware variant |
+| providers | moderate | Claude Code + Codex use cached parsing; Cursor gains tracking high-water marks and state fingerprints |
 | TUI | none | No changes |
 | config | none | No changes |
 | detect | none | No changes |
-| daemon | minor | Collect loop gets adaptive backoff |
-| telemetry | minor | `SourceCollector` tracks last-collect time for change detection |
+| daemon | moderate | Collect loop gets adaptive backoff and reuses one source instance per provider |
+| telemetry | moderate | `SourceCollector` tracks last-collect time; duplicate enrichment avoids unchanged writes |
 | CLI | none | No changes |
 
 ## 5. Detailed Design
@@ -129,11 +133,39 @@ This requires `collectAndFlush` to return the count of collected events. Current
 
 The `dataIngested` flag already resets the read model refresh when new data arrives, so the read model will respond quickly after backoff resets.
 
-### 5.5 Backward Compatibility
+### 5.5 Persistent telemetry source instances
+
+`collectAndFlush()` currently rebuilds the provider registry on every cycle. Because the registry creates new provider values, all provider-local incremental state is lost before the next collection.
+
+Build the telemetry source map once when `Service` starts and retain it on the service. Each cycle may still construct account-specific `SourceCollector` wrappers, but those wrappers must reference the same underlying source instances. This lifetime is intentionally process-local: it avoids a cursor checkpoint format while ensuring a daemon restart performs a complete bootstrap import.
+
+### 5.6 Incremental Cursor collection
+
+Cursor has two different mutation models and therefore needs a hybrid cursor:
+
+- `ai_code_hashes` in `ai-code-tracking.db` is treated as append-only. Track the maximum SQLite `rowid` per normalized database-path pair and query only rows above that mark. If the database is replaced or its maximum row ID moves backward, discard the mark and perform a full import.
+- `state.vscdb` keys can be updated in place. First compare a lightweight signature of the database and WAL files. When it changes, query the relevant `cursorDiskKV` and daily-stat key/value pairs, hash the raw values, and parse only keys whose fingerprint is new or changed.
+- Keep an event fingerprint map as a final guard for derived records such as scored commits. New or materially changed events are returned; identical derived events are suppressed.
+- Advance cursors and fingerprints only after the corresponding query and conversion succeeds. Collection errors therefore retry rather than losing data.
+
+State is keyed by the resolved tracking/state database paths so multiple Cursor profiles do not share cursors. The first collection for each path emits complete history. Deletions remain non-destructive because the telemetry store has no source-deletion protocol.
+
+The use of SQLite `rowid` assumes `ai_code_hashes` remains append-oriented. Replacement and row-ID regression are handled explicitly, but in-place mutation of an older tracking row would not be detected. Current observed schema and writer behavior support this trade-off; state rows use fingerprints precisely because they are known to mutate.
+
+### 5.7 Unchanged duplicate suppression in the telemetry store
+
+Deduplication still merges an incoming record according to source priority. A materially changed event from the same source system and channel may replace its prior canonical values, which is required for mutable Cursor state keys; a different source at equal priority may not. Before issuing `UPDATE usage_events`, compare every merged canonical field with the stored row. If they are equivalent, return a deduplicated result without executing an update. New inserts and higher-priority enrichment retain their existing behavior.
+
+This is a defensive layer rather than the primary optimization: healthy idle collectors should produce no events, but a replay from any source should not create WAL churn when it carries no new information.
+
+### 5.8 Backward Compatibility
 
 - Caching is transparent — same events produced, just faster.
 - Incremental parsing produces identical results to full parsing (append-only invariant).
 - Adaptive backoff resets immediately when new data is found, so latency is unchanged during active use.
+- Persistent source instances change only source lifetime, not provider registration or configuration.
+- Cursor performs one full import on first use and after daemon restart, preserving existing history behavior.
+- Unchanged duplicate suppression preserves deduplication results while avoiding a no-op SQL update.
 
 ## 6. Alternatives Considered
 
@@ -175,8 +207,42 @@ Tests: Test that interval doubles after empty cycles. Test that interval resets 
 Depends on: Tasks 1-3
 Description: `go build ./...`, `go test` all changed packages, verify CPU usage drops.
 
+### Task 5: Preserve source instances across daemon collection cycles
+Files: `internal/daemon/server.go`, `internal/daemon/server_collect.go`, `internal/daemon/source_collectors.go`
+Depends on: none
+Description:
+- Construct the telemetry source map once during service startup.
+- Reuse those instances when building account-specific collectors on every cycle.
+- Keep the existing helper that builds fresh sources for isolated callers and tests.
+Tests: Build collectors twice from an injected source map and verify both wrappers reference the same source instance.
+
+### Task 6: Add incremental Cursor telemetry cursors
+Files: `internal/providers/cursor/cursor.go`, `internal/providers/cursor/telemetry.go`, `internal/providers/cursor/tracking_records.go`, `internal/providers/cursor/state_records.go`
+Depends on: Task 5
+Description:
+- Maintain collection state per tracking/state database-path pair.
+- Query tracking rows above a persistent row-ID high-water mark, with replacement/regression fallback.
+- Detect state database changes, fingerprint relevant raw key/value rows, and parse only changed keys.
+- Suppress identical derived events with stable event fingerprints.
+Tests: An idle second collection emits zero events; one appended tracking row emits one event; one changed state value parses/emits only that key; separate path pairs do not share state; replacement triggers bootstrap.
+
+### Task 7: Skip unchanged duplicate updates
+Files: `internal/telemetry/store.go`, `internal/telemetry/store_test.go`
+Depends on: none
+Description:
+- Compare the priority-merged canonical event with the stored row.
+- Avoid `UPDATE usage_events` when all values are equivalent.
+- Preserve higher-priority enrichment and uniqueness-conflict retry behavior.
+Tests: An update-counting trigger observes no update for an identical duplicate and one update for meaningful enrichment.
+
+### Task 8: Validate the extension
+Depends on: Tasks 5-7
+Description: Run focused daemon, Cursor, and telemetry tests plus an OpenUsage build sequentially with the repository's four-core limits. Do not start the daemon.
+
 ### Dependency Graph
 ```
-Tasks 1, 2, 3: parallel (independent)
-Task 4: depends on all
+Tasks 1, 2, 3: original implementation (complete)
+Tasks 5 and 7: independent
+Task 6: depends on Task 5
+Task 8: depends on Tasks 5, 6, and 7
 ```
