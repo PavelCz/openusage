@@ -162,10 +162,30 @@ func cursorTableColumns(ctx context.Context, db *sql.DB, table string) (map[stri
 }
 
 func loadDailyStatsRecords(ctx context.Context, db *sql.DB) ([]cursorDailyStatsRecord, error) {
-	rows, err := db.QueryContext(ctx, `
+	return loadDailyStatsRecordsQuery(ctx, db, `
 		SELECT key, value FROM ItemTable
 		WHERE key LIKE 'aiCodeTracking.dailyStats.%'
-		ORDER BY key ASC`)
+		ORDER BY key ASC`, nil)
+}
+
+func loadDailyStatsRecordsByKeys(ctx context.Context, db *sql.DB, keys []string) ([]cursorDailyStatsRecord, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(keys))
+	args := make([]interface{}, len(keys))
+	for i, key := range keys {
+		placeholders[i] = "?"
+		args[i] = key
+	}
+	return loadDailyStatsRecordsQuery(ctx, db, fmt.Sprintf(`
+		SELECT key, value FROM ItemTable
+		WHERE key IN (%s)
+		ORDER BY key ASC`, strings.Join(placeholders, ",")), args)
+}
+
+func loadDailyStatsRecordsQuery(ctx context.Context, db *sql.DB, query string, args []interface{}) ([]cursorDailyStatsRecord, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("cursor: querying dailyStats: %w", err)
 	}

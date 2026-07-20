@@ -20,6 +20,7 @@ import (
 	"github.com/janekbaraniewski/openusage/internal/core"
 	"github.com/janekbaraniewski/openusage/internal/exporter"
 	"github.com/janekbaraniewski/openusage/internal/providers"
+	"github.com/janekbaraniewski/openusage/internal/providers/shared"
 	"github.com/janekbaraniewski/openusage/internal/telemetry"
 )
 
@@ -31,6 +32,7 @@ type Service struct {
 	pipeline     *telemetry.Pipeline
 	quotaIngest  *telemetry.QuotaSnapshotIngestor
 	providerByID map[string]core.UsageProvider
+	sourcesByID  map[string]shared.TelemetrySource
 	exp          *exporter.Exporter
 
 	spoolMu     sync.Mutex // guards spool filesystem operations (read/write/cleanup)
@@ -131,6 +133,7 @@ func startService(ctx context.Context, cfg Config) (*Service, error) {
 		}
 	}
 
+	sourcesByID := telemetrySourcesBySystem()
 	svc := &Service{
 		cfg:           cfg,
 		ctx:           ctx,
@@ -138,6 +141,7 @@ func startService(ctx context.Context, cfg Config) (*Service, error) {
 		pipeline:      telemetry.NewPipeline(store, telemetry.NewSpool(cfg.SpoolDir)),
 		quotaIngest:   telemetry.NewQuotaSnapshotIngestor(store),
 		providerByID:  providersByID(),
+		sourcesByID:   sourcesByID,
 		exp:           exp,
 		logThrottle:   core.NewLogThrottle(200, 10*time.Minute),
 		rmCache:       newReadModelCache(),
@@ -154,7 +158,7 @@ func startService(ctx context.Context, cfg Config) (*Service, error) {
 		svc.cfg.SpoolDir,
 		svc.cfg.CollectInterval,
 		svc.cfg.PollInterval,
-		telemetrySourceCount(),
+		len(sourcesByID),
 		len(svc.providerByID),
 	)
 

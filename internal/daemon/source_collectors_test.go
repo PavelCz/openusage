@@ -5,8 +5,27 @@ import (
 
 	"github.com/janekbaraniewski/openusage/internal/core"
 	"github.com/janekbaraniewski/openusage/internal/providers"
+	"github.com/janekbaraniewski/openusage/internal/providers/cursor"
+	"github.com/janekbaraniewski/openusage/internal/providers/shared"
 	"github.com/janekbaraniewski/openusage/internal/telemetry"
 )
+
+func TestBuildCollectorsFromSources_ReusesSourceInstance(t *testing.T) {
+	source := cursor.New()
+	sources := map[string]shared.TelemetrySource{"cursor": source}
+
+	first, firstWarnings := buildCollectorsFromSources(nil, sources)
+	second, secondWarnings := buildCollectorsFromSources(nil, sources)
+	if len(firstWarnings) != 0 || len(secondWarnings) != 0 {
+		t.Fatalf("warnings = %v / %v, want none", firstWarnings, secondWarnings)
+	}
+
+	firstCollector := findSourceCollector(t, first, "cursor")
+	secondCollector := findSourceCollector(t, second, "cursor")
+	if firstCollector.Source != source || secondCollector.Source != source {
+		t.Fatalf("collector sources = %p / %p, want retained source %p", firstCollector.Source, secondCollector.Source, source)
+	}
+}
 
 func TestBuildCollectors_ScopesConfiguredAccount(t *testing.T) {
 	collectors, warnings := buildCollectors([]core.AccountConfig{
