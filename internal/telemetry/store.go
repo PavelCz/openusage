@@ -402,22 +402,7 @@ func (s *Store) RunMigrations(ctx context.Context) error {
 
 func (s *Store) Ingest(ctx context.Context, req IngestRequest) (IngestResult, error) {
 	norm := normalizeRequest(req, s.now().UTC())
-	payloadBytes, err := marshalPayload(norm.Payload)
-	if err != nil {
-		return IngestResult{}, fmt.Errorf("telemetry: marshal payload: %w", err)
-	}
-
-	rawEventID, err := newUUID()
-	if err != nil {
-		return IngestResult{}, fmt.Errorf("telemetry: create raw event id: %w", err)
-	}
-	eventID, err := newUUID()
-	if err != nil {
-		return IngestResult{}, fmt.Errorf("telemetry: create event id: %w", err)
-	}
-	now := s.now().UTC()
 	dedupKey := BuildDedupKey(norm)
-	payloadHash := sha256.Sum256(payloadBytes)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -443,6 +428,21 @@ func (s *Store) Ingest(ctx context.Context, req IngestRequest) (IngestResult, er
 			RawEventID: existing.RawEventID,
 		}, nil
 	}
+
+	payloadBytes, err := marshalPayload(norm.Payload)
+	if err != nil {
+		return IngestResult{}, fmt.Errorf("telemetry: marshal payload: %w", err)
+	}
+	rawEventID, err := newUUID()
+	if err != nil {
+		return IngestResult{}, fmt.Errorf("telemetry: create raw event id: %w", err)
+	}
+	eventID, err := newUUID()
+	if err != nil {
+		return IngestResult{}, fmt.Errorf("telemetry: create event id: %w", err)
+	}
+	now := s.now().UTC()
+	payloadHash := sha256.Sum256(payloadBytes)
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO usage_raw_events (
@@ -560,6 +560,7 @@ func findEventByDedupKey(ctx context.Context, tx *sql.Tx, dedupKey string) (stor
 
 type storedCanonicalEvent struct {
 	EventID        string
+	SourceSystem   string
 	SourceChannel  string
 	ProviderID     sql.NullString
 	AccountID      sql.NullString
@@ -608,6 +609,7 @@ func loadCanonicalEventByDedupKey(ctx context.Context, tx *sql.Tx, dedupKey stri
 			e.requests,
 			e.tool_name,
 			e.status,
+			COALESCE(r.source_system, ''),
 			COALESCE(r.source_channel, '')
 		FROM usage_events e
 		JOIN usage_raw_events r ON r.raw_event_id = e.raw_event_id
@@ -635,6 +637,7 @@ func loadCanonicalEventByDedupKey(ctx context.Context, tx *sql.Tx, dedupKey stri
 		&row.Requests,
 		&row.ToolName,
 		&row.Status,
+		&row.SourceSystem,
 		&row.SourceChannel,
 	)
 	return row, err
@@ -648,7 +651,10 @@ func enrichEventByDedupKey(ctx context.Context, tx *sql.Tx, dedupKey string, nor
 		return err
 	}
 
-	override := sourceChannelPriority(norm.SourceChannel) > sourceChannelPriority(SourceChannel(current.SourceChannel))
+	incomingPriority := sourceChannelPriority(norm.SourceChannel)
+	currentPriority := sourceChannelPriority(SourceChannel(current.SourceChannel))
+	override := incomingPriority > currentPriority ||
+		(incomingPriority == currentPriority && strings.EqualFold(strings.TrimSpace(current.SourceSystem), strings.TrimSpace(string(norm.SourceSystem))))
 
 	providerID := chooseString(current.ProviderID, norm.ProviderID, override)
 	accountID := chooseString(current.AccountID, norm.AccountID, override)
@@ -671,6 +677,15 @@ func enrichEventByDedupKey(ctx context.Context, tx *sql.Tx, dedupKey string, nor
 	costUSD := chooseFloat64(current.CostUSD, norm.CostUSD, override)
 	requests := chooseInt64(current.Requests, norm.Requests, override)
 	status := chooseStatus(current.Status, norm.Status, override)
+	if canonicalEventMatches(
+		current,
+		providerID, accountID, workspaceID, sessionID, turnID, messageID, toolCallID,
+		modelRaw, modelCanonical, modelLineage,
+		inputTokens, outputTokens, reasoningTokens, cacheReadTokens, cacheWriteTokens,
+		totalTokens, costUSD, requests, toolName, status,
+	) {
+		return nil
+	}
 
 	_, err = tx.ExecContext(ctx, `
 		UPDATE usage_events
@@ -720,6 +735,61 @@ func enrichEventByDedupKey(ctx context.Context, tx *sql.Tx, dedupKey string, nor
 		current.EventID,
 	)
 	return err
+}
+
+func canonicalEventMatches(
+	current storedCanonicalEvent,
+	providerID, accountID, workspaceID, sessionID, turnID, messageID, toolCallID string,
+	modelRaw, modelCanonical, modelLineage string,
+	inputTokens, outputTokens, reasoningTokens, cacheReadTokens, cacheWriteTokens *int64,
+	totalTokens *int64,
+	costUSD *float64,
+	requests *int64,
+	toolName string,
+	status EventStatus,
+) bool {
+	return nullStringMatches(current.ProviderID, providerID) &&
+		nullStringMatches(current.AccountID, accountID) &&
+		nullStringMatches(current.WorkspaceID, workspaceID) &&
+		nullStringMatches(current.SessionID, sessionID) &&
+		nullStringMatches(current.TurnID, turnID) &&
+		nullStringMatches(current.MessageID, messageID) &&
+		nullStringMatches(current.ToolCallID, toolCallID) &&
+		nullStringMatches(current.ModelRaw, modelRaw) &&
+		nullStringMatches(current.ModelCanonical, modelCanonical) &&
+		nullStringMatches(current.ModelLineageID, modelLineage) &&
+		nullInt64Matches(current.InputTokens, inputTokens) &&
+		nullInt64Matches(current.OutputTokens, outputTokens) &&
+		nullInt64Matches(current.Reasoning, reasoningTokens) &&
+		nullInt64Matches(current.CacheRead, cacheReadTokens) &&
+		nullInt64Matches(current.CacheWrite, cacheWriteTokens) &&
+		nullInt64Matches(current.TotalTokens, totalTokens) &&
+		nullFloat64Matches(current.CostUSD, costUSD) &&
+		nullInt64Matches(current.Requests, requests) &&
+		nullStringMatches(current.ToolName, toolName) &&
+		strings.TrimSpace(current.Status) == strings.TrimSpace(string(status))
+}
+
+func nullStringMatches(current sql.NullString, value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return !current.Valid || strings.TrimSpace(current.String) == ""
+	}
+	return current.Valid && strings.TrimSpace(current.String) == value
+}
+
+func nullInt64Matches(current sql.NullInt64, value *int64) bool {
+	if value == nil {
+		return !current.Valid
+	}
+	return current.Valid && current.Int64 == *value
+}
+
+func nullFloat64Matches(current sql.NullFloat64, value *float64) bool {
+	if value == nil {
+		return !current.Valid
+	}
+	return current.Valid && current.Float64 == *value
 }
 
 func sourceChannelPriority(channel SourceChannel) int {
