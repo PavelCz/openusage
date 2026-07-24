@@ -39,29 +39,41 @@ func (p *Provider) Collect(ctx context.Context, opts shared.TelemetryCollectOpti
 	trackingDBPath := shared.ExpandHome(opts.Path("tracking_db", defaultTrackingDBPath()))
 	stateDBPath := shared.ExpandHome(opts.Path("state_db", defaultStateDBPath()))
 
+	p.telemetryMu.Lock()
+	defer p.telemetryMu.Unlock()
+	if p.telemetryState == nil {
+		p.telemetryState = make(map[string]*cursorTelemetryState)
+	}
+	stateKey := strings.TrimSpace(trackingDBPath) + "\x00" + strings.TrimSpace(stateDBPath)
+	state := p.telemetryState[stateKey]
+	if state == nil {
+		state = newCursorTelemetryState()
+	}
+	workingState := state.clone()
+
 	seenMessages := make(map[string]bool)
 	seenTools := make(map[string]bool)
 	var out []shared.TelemetryEvent
 
 	// Collect from the tracking DB (ai_code_hashes + scored_commits).
 	if trackingDBPath != "" {
-		events, commitEvents, err := collectTrackingDBEvents(ctx, trackingDBPath)
+		events, err := workingState.collectTrackingEvents(ctx, trackingDBPath)
 		if err != nil {
 			return nil, fmt.Errorf("collect cursor tracking telemetry: %w", err)
 		}
 		appendCursorDedupEvents(&out, events, seenMessages, seenTools)
-		appendCursorDedupEvents(&out, commitEvents, seenMessages, seenTools)
 	}
 
 	// Collect from the state DB (composerData + bubbleId entries).
 	if stateDBPath != "" {
-		events, err := collectStateDBEvents(ctx, stateDBPath)
+		events, err := workingState.collectStateEvents(ctx, stateDBPath)
 		if err != nil {
 			return nil, fmt.Errorf("collect cursor state telemetry: %w", err)
 		}
 		appendCursorDedupEvents(&out, events, seenMessages, seenTools)
 	}
 
+	p.telemetryState[stateKey] = workingState
 	return out, nil
 }
 
@@ -135,6 +147,12 @@ func collectTrackingDBEvents(ctx context.Context, dbPath string) ([]shared.Telem
 		return nil, commitEvents, err
 	}
 
+	out := trackingEventsFromRecords(records, dbPath)
+
+	return out, commitEvents, nil
+}
+
+func trackingEventsFromRecords(records []cursorTrackingRecord, dbPath string) []shared.TelemetryEvent {
 	var out []shared.TelemetryEvent
 	for _, record := range records {
 		messageID := fmt.Sprintf("cursor-tracking:%d", record.RowID)
@@ -182,7 +200,7 @@ func collectTrackingDBEvents(ctx context.Context, dbPath string) ([]shared.Telem
 		})
 	}
 
-	return out, commitEvents, nil
+	return out
 }
 
 // collectStateDBEvents reads composerData and bubbleId entries from the
@@ -551,7 +569,10 @@ func collectDailyStatsEvents(ctx context.Context, db *sql.DB, dbPath string) ([]
 	if err != nil {
 		return nil, err
 	}
+	return dailyStatsEventsFromRecords(records, dbPath), nil
+}
 
+func dailyStatsEventsFromRecords(records []cursorDailyStatsRecord, dbPath string) []shared.TelemetryEvent {
 	var out []shared.TelemetryEvent
 	for _, record := range records {
 		dayTime, err := time.Parse("2006-01-02", record.Date)
@@ -590,7 +611,7 @@ func collectDailyStatsEvents(ctx context.Context, db *sql.DB, dbPath string) ([]
 		})
 	}
 
-	return out, nil
+	return out
 }
 
 // queryScoredCommits reads scored_commits from an already-open tracking DB

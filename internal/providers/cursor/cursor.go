@@ -65,6 +65,12 @@ type Provider struct {
 	bubbleRecords      []cursorBubbleRecord
 	scoredCommitsCount int
 	scoredCommitsAgg   *scoredCommitsAggregate
+
+	// Telemetry collection state is separate from the dashboard caches above.
+	// It is keyed by the configured SQLite path pair and survives daemon polls
+	// because the daemon retains one Provider instance for its lifetime.
+	telemetryMu    sync.Mutex
+	telemetryState map[string]*cursorTelemetryState
 }
 
 type cachedAccountState struct {
@@ -95,8 +101,9 @@ func New() *Provider {
 			},
 			Dashboard: dashboardWidget(),
 		}),
-		clock:        core.SystemClock{},
-		accountCache: make(map[string]cachedAccountState),
+		clock:          core.SystemClock{},
+		accountCache:   make(map[string]cachedAccountState),
+		telemetryState: make(map[string]*cursorTelemetryState),
 	}
 }
 

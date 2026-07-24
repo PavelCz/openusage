@@ -85,7 +85,14 @@ func (s *Service) collectAndFlush(ctx context.Context) int {
 	if accountsErr != nil {
 		warnings = append(warnings, fmt.Sprintf("collector account config: %v", accountsErr))
 	}
-	collectors, collectorWarnings := buildCollectors(accounts)
+	sources := s.sourcesByID
+	if sources == nil {
+		// Tests and embedded callers may construct Service directly. Production
+		// initializes this map once in startService and reuses it for all cycles.
+		sources = telemetrySourcesBySystem()
+		s.sourcesByID = sources
+	}
+	collectors, collectorWarnings := buildCollectorsFromSources(accounts, sources)
 	warnings = append(warnings, collectorWarnings...)
 
 	for _, collector := range collectors {

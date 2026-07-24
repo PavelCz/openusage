@@ -44,7 +44,6 @@ type telemetryCacheEntry struct {
 	modTime  time.Time
 	size     int64
 	byteSize int64 // file size at last parse (for incremental seek)
-	events   []shared.TelemetryEvent
 }
 
 func New() *Provider {

@@ -58,8 +58,10 @@ type copilotAPICache struct {
 type Provider struct {
 	providerbase.Base
 
-	cacheMu  sync.Mutex
-	apiCache *copilotAPICache
+	cacheMu        sync.Mutex
+	apiCache       *copilotAPICache
+	telemetryMu    sync.Mutex
+	telemetryState map[string]*copilotTelemetryCollectState
 }
 
 func New() *Provider {
@@ -86,6 +88,7 @@ func New() *Provider {
 			},
 			Dashboard: dashboardWidget(),
 		}),
+		telemetryState: make(map[string]*copilotTelemetryCollectState),
 	}
 }
 

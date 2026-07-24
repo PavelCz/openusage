@@ -54,18 +54,16 @@ func (p *Provider) Collect(ctx context.Context, opts shared.TelemetryCollectOpti
 		// Check cache: skip unchanged files entirely.
 		if entry, ok := p.telemetryCache[path]; ok {
 			if entry.modTime.Equal(info.ModTime()) && entry.size == info.Size() {
-				out = append(out, entry.events...)
 				continue
 			}
 			// File grew (append-only): parse only new lines.
 			if info.Size() > entry.byteSize && entry.byteSize > 0 {
 				newEvents, newSize, err := parseTelemetryConversationFileFrom(path, entry.byteSize)
 				if err == nil && newSize > entry.byteSize {
-					entry.events = append(entry.events, newEvents...)
 					entry.modTime = info.ModTime()
 					entry.size = info.Size()
 					entry.byteSize = newSize
-					out = append(out, entry.events...)
+					out = append(out, newEvents...)
 					continue
 				}
 			}
@@ -80,7 +78,6 @@ func (p *Provider) Collect(ctx context.Context, opts shared.TelemetryCollectOpti
 			modTime:  info.ModTime(),
 			size:     info.Size(),
 			byteSize: info.Size(),
-			events:   events,
 		}
 		out = append(out, events...)
 	}

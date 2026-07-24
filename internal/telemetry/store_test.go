@@ -81,6 +81,20 @@ func TestStoreIngest_IdempotentByDedupKey(t *testing.T) {
 	if first.Deduped {
 		t.Fatal("first ingest should not be deduped")
 	}
+	if _, err := db.Exec(`CREATE TABLE update_audit (count INTEGER NOT NULL)`); err != nil {
+		t.Fatalf("create update audit: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO update_audit (count) VALUES (0)`); err != nil {
+		t.Fatalf("seed update audit: %v", err)
+	}
+	if _, err := db.Exec(`
+		CREATE TRIGGER count_usage_event_updates
+		AFTER UPDATE ON usage_events
+		BEGIN
+			UPDATE update_audit SET count = count + 1;
+		END`); err != nil {
+		t.Fatalf("create update trigger: %v", err)
+	}
 
 	second, err := store.Ingest(context.Background(), req)
 	if err != nil {
@@ -91,6 +105,13 @@ func TestStoreIngest_IdempotentByDedupKey(t *testing.T) {
 	}
 	if second.EventID != first.EventID {
 		t.Fatalf("deduped event id = %s, want %s", second.EventID, first.EventID)
+	}
+	var updateCount int
+	if err := db.QueryRow(`SELECT count FROM update_audit`).Scan(&updateCount); err != nil {
+		t.Fatalf("read update audit: %v", err)
+	}
+	if updateCount != 0 {
+		t.Fatalf("unchanged duplicate updates = %d, want 0", updateCount)
 	}
 
 	var rawCount int
@@ -115,6 +136,51 @@ func TestStoreIngest_IdempotentByDedupKey(t *testing.T) {
 	}
 	if totalTokens != 150 {
 		t.Fatalf("total_tokens = %d, want 150", totalTokens)
+	}
+}
+
+func TestStoreIngest_SameSourceMutationUpdatesCanonicalEvent(t *testing.T) {
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "telemetry.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+	store := NewStore(db)
+	if err := store.Init(context.Background()); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	requests := int64(1)
+	req := IngestRequest{
+		SourceSystem:  SourceSystem("cursor"),
+		SourceChannel: SourceChannelSQLite,
+		OccurredAt:    time.Date(2026, time.July, 20, 12, 0, 0, 0, time.UTC),
+		ProviderID:    "cursor",
+		SessionID:     "session-1",
+		MessageID:     "cursor-composer:session-1:claude",
+		EventType:     EventTypeMessageUsage,
+		TokenUsage:    core.TokenUsage{Requests: &requests},
+	}
+	if _, err := store.Ingest(context.Background(), req); err != nil {
+		t.Fatalf("first ingest: %v", err)
+	}
+
+	requests = 2
+	req.TokenUsage.Requests = &requests
+	result, err := store.Ingest(context.Background(), req)
+	if err != nil {
+		t.Fatalf("mutated ingest: %v", err)
+	}
+	if !result.Deduped {
+		t.Fatal("mutated ingest should retain the canonical row")
+	}
+
+	var storedRequests int64
+	if err := db.QueryRow(`SELECT requests FROM usage_events WHERE event_id = ?`, result.EventID).Scan(&storedRequests); err != nil {
+		t.Fatalf("read requests: %v", err)
+	}
+	if storedRequests != 2 {
+		t.Fatalf("stored requests = %d, want 2", storedRequests)
 	}
 }
 
@@ -147,6 +213,20 @@ func TestStoreIngest_DedupEnrichesMissingFields(t *testing.T) {
 	if first.Deduped {
 		t.Fatalf("first ingest unexpectedly deduped")
 	}
+	if _, err := db.Exec(`CREATE TABLE update_audit (count INTEGER NOT NULL)`); err != nil {
+		t.Fatalf("create update audit: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO update_audit (count) VALUES (0)`); err != nil {
+		t.Fatalf("seed update audit: %v", err)
+	}
+	if _, err := db.Exec(`
+		CREATE TRIGGER count_usage_event_updates
+		AFTER UPDATE ON usage_events
+		BEGIN
+			UPDATE update_audit SET count = count + 1;
+		END`); err != nil {
+		t.Fatalf("create update trigger: %v", err)
+	}
 
 	in := int64(120)
 	out := int64(40)
@@ -176,6 +256,13 @@ func TestStoreIngest_DedupEnrichesMissingFields(t *testing.T) {
 	}
 	if second.EventID != first.EventID {
 		t.Fatalf("deduped event id = %s, want %s", second.EventID, first.EventID)
+	}
+	var updateCount int
+	if err := db.QueryRow(`SELECT count FROM update_audit`).Scan(&updateCount); err != nil {
+		t.Fatalf("read update audit: %v", err)
+	}
+	if updateCount != 1 {
+		t.Fatalf("meaningful enrichment updates = %d, want 1", updateCount)
 	}
 
 	var (

@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -53,9 +54,9 @@ func (p *Provider) Collect(ctx context.Context, opts shared.TelemetryCollectOpti
 			return out, ctx.Err()
 		}
 
-		if entry, ok := p.telemetryCache[path]; ok {
+		entry, cached := p.telemetryCache[path]
+		if cached {
 			if entry.modTime.Equal(info.ModTime()) && entry.size == info.Size() {
-				out = append(out, entry.events...)
 				continue
 			}
 		}
@@ -69,14 +70,77 @@ func (p *Provider) Collect(ctx context.Context, opts shared.TelemetryCollectOpti
 				events[i].AccountID = accountID
 			}
 		}
-		p.telemetryCache[path] = &telemetryCacheEntry{
-			modTime: info.ModTime(),
-			size:    info.Size(),
-			events:  events,
+		fingerprints := codexTelemetryEventFingerprints(events)
+		if !cached || info.Size() < entry.size {
+			out = append(out, events...)
+		} else {
+			out = append(out, changedCodexTelemetryEvents(events, entry.eventFingerprints)...)
 		}
-		out = append(out, events...)
+		p.telemetryCache[path] = &telemetryCacheEntry{
+			modTime:           info.ModTime(),
+			size:              info.Size(),
+			eventFingerprints: fingerprints,
+		}
 	}
 	return out, nil
+}
+
+func changedCodexTelemetryEvents(events []shared.TelemetryEvent, previous map[string][32]byte) []shared.TelemetryEvent {
+	if len(events) == 0 {
+		return nil
+	}
+	out := make([]shared.TelemetryEvent, 0, len(events))
+	for i := range events {
+		identity := codexTelemetryEventIdentity(events[i])
+		fingerprint := codexTelemetryEventFingerprint(events[i])
+		if prior, ok := previous[identity]; ok && prior == fingerprint {
+			continue
+		}
+		out = append(out, events[i])
+	}
+	return out
+}
+
+func codexTelemetryEventFingerprints(events []shared.TelemetryEvent) map[string][32]byte {
+	out := make(map[string][32]byte, len(events))
+	for i := range events {
+		out[codexTelemetryEventIdentity(events[i])] = codexTelemetryEventFingerprint(events[i])
+	}
+	return out
+}
+
+func codexTelemetryEventIdentity(event shared.TelemetryEvent) string {
+	sourceFile, _ := event.Payload["source_file"].(string)
+	if line, ok := event.Payload["line"]; ok && strings.TrimSpace(sourceFile) != "" {
+		return fmt.Sprintf(
+			"%s\x00%s\x00%v\x00%s\x00%s",
+			event.SchemaVersion,
+			sourceFile,
+			line,
+			event.EventType,
+			event.ToolCallID,
+		)
+	}
+	return strings.Join([]string{
+		event.SchemaVersion,
+		string(event.Channel),
+		event.AccountID,
+		event.SessionID,
+		event.TurnID,
+		event.MessageID,
+		event.ToolCallID,
+		string(event.EventType),
+		event.ToolName,
+		event.OccurredAt.UTC().Format(time.RFC3339Nano),
+	}, "\x00")
+}
+
+func codexTelemetryEventFingerprint(event shared.TelemetryEvent) [32]byte {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return sha256.Sum256([]byte(codexTelemetryEventIdentity(event)))
+	}
+	return sha256.Sum256(data)
 }
 
 func (p *Provider) ParseHookPayload(raw []byte, opts shared.TelemetryCollectOptions) ([]shared.TelemetryEvent, error) {
