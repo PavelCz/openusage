@@ -1,6 +1,6 @@
 # Daemon Power Optimization V2 Design
 
-Date: 2026-04-09 (extended 2026-07-20)
+Date: 2026-04-09 (extended 2026-07-20 and 2026-07-24)
 Status: Implemented
 Author: janekbaraniewski
 
@@ -167,6 +167,33 @@ This is a defensive layer rather than the primary optimization: healthy idle col
 - Cursor performs one full import on first use and after daemon restart, preserving existing history behavior.
 - Unchanged duplicate suppression preserves deduplication results while avoiding a no-op SQL update.
 
+### 5.9 Delta-only steady-state collection for Codex, Claude Code, and Copilot
+
+The original JSONL cache work avoided reparsing unchanged files, but returned
+every cached event on each collection. This kept `totalCollected` non-zero,
+prevented collection backoff, and sent historical events through SQLite
+deduplication every 20 seconds. On the observed installation this replay was
+approximately 7,700 Codex events and 6,900 Claude Code events per cycle.
+
+For Codex and Claude Code, the first collection still emits complete history.
+An unchanged file emits no events. An append emits only events from the new
+portion of the file, or events whose final representation changed because an
+appended completion updated an earlier tool call. A truncated, rewritten, or
+replaced file resets its in-memory cursor and performs a correctness-preserving
+bootstrap for that file.
+
+Copilot uses the same process-local semantics across its session JSONL files,
+session-store SQLite database (including its WAL), and token-estimation logs.
+A stable signature of those inputs skips collection entirely when nothing
+changed. When an input changes, the collector reparses the affected source set
+and emits only new or materially changed event identities. This preserves
+mutable tool-call completion and log-enrichment updates without replaying
+unchanged history.
+
+Provider cursors remain process-local. Daemon restart intentionally performs a
+full bootstrap, matching the existing Cursor behavior and avoiding a persistent
+checkpoint format.
+
 ## 6. Alternatives Considered
 
 ### Share the Fetch path's jsonlCache with Collect
@@ -239,10 +266,40 @@ Tests: An update-counting trigger observes no update for an identical duplicate 
 Depends on: Tasks 5-7
 Description: Run focused daemon, Cursor, and telemetry tests plus an OpenUsage build sequentially with the repository's four-core limits. Do not start the daemon.
 
+### Task 9: Make Claude Code collection delta-only
+Files: `internal/providers/claude_code/claude_code.go`, `internal/providers/claude_code/telemetry_usage.go`
+Depends on: Task 1
+Description:
+- Keep the existing append offset and parser cache, but return no events for unchanged files.
+- Return only newly parsed events for append-only growth.
+- Reset and bootstrap a file after truncation, rewrite, or replacement.
+Tests: Bootstrap, idle, append, and truncation behavior.
+
+### Task 10: Make Codex collection delta-only
+Files: `internal/providers/codex/codex.go`, `internal/providers/codex/telemetry_usage.go`
+Depends on: Task 2
+Description:
+- Return no events for unchanged files.
+- Track stable per-file event identities and fingerprints so an appended file emits only new or materially changed events.
+- Preserve token-delta correctness by parsing a changed file with its full session context.
+- Reset and bootstrap a file after truncation, rewrite, or replacement.
+Tests: Bootstrap, idle, append/token-delta, tool-completion update, and truncation behavior.
+
+### Task 11: Add incremental Copilot collection state
+Files: `internal/providers/copilot/copilot.go`, `internal/providers/copilot/telemetry.go`, `internal/providers/copilot/telemetry_incremental.go`
+Depends on: none
+Description:
+- Track signatures for session JSONL files, the session-store database/WAL, and log files.
+- Skip parsing when the complete input signature is unchanged.
+- Filter reparsed output through stable event identities and fingerprints so only new or materially changed events are returned.
+- Commit signatures and fingerprints only after collection succeeds.
+Tests: Bootstrap, idle, append, mutable completion/enrichment, and input reset behavior.
+
 ### Dependency Graph
 ```
 Tasks 1, 2, 3: original implementation (complete)
 Tasks 5 and 7: independent
 Task 6: depends on Task 5
 Task 8: depends on Tasks 5, 6, and 7
+Tasks 9, 10, and 11: independent extensions of the completed cache work
 ```

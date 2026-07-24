@@ -79,7 +79,23 @@ func (p *Provider) DefaultCollectOptions() shared.TelemetryCollectOptions {
 func (p *Provider) Collect(ctx context.Context, opts shared.TelemetryCollectOptions) ([]shared.TelemetryEvent, error) {
 	sessionDir := shared.ExpandHome(opts.Path("sessions_dir", defaultCopilotSessionsDir()))
 	storeDB := shared.ExpandHome(opts.Path("session_store_db", defaultCopilotSessionStoreDB()))
+	logsDir := shared.ExpandHome(opts.Path("logs_dir", defaultCopilotLogsPath()))
 	if sessionDir == "" {
+		return nil, nil
+	}
+
+	p.telemetryMu.Lock()
+	defer p.telemetryMu.Unlock()
+	if p.telemetryState == nil {
+		p.telemetryState = make(map[string]*copilotTelemetryCollectState)
+	}
+	stateKey := copilotTelemetryStateKey(sessionDir, storeDB, logsDir)
+	signatures, err := copilotTelemetryInputSignatures(sessionDir, storeDB, logsDir)
+	if err != nil {
+		return nil, err
+	}
+	previous := p.telemetryState[stateKey]
+	if previous != nil && copilotTelemetrySignaturesEqual(previous.signatures, signatures) {
 		return nil, nil
 	}
 
@@ -119,12 +135,25 @@ func (p *Provider) Collect(ctx context.Context, opts shared.TelemetryCollectOpti
 
 	// Enrich synthetic message_usage events with estimated token counts from
 	// CompactionProcessor log entries.
-	logsDir := shared.ExpandHome(opts.Path("logs_dir", defaultCopilotLogsPath()))
 	if deltas := parseCopilotLogTokenDeltas(logsDir); len(deltas) > 0 {
 		enrichSyntheticTokenEstimates(out, deltas)
 	}
 
-	return out, nil
+	fingerprints := copilotTelemetryEventFingerprints(out)
+	if previous == nil || copilotTelemetryInputsReset(previous.signatures, signatures) {
+		p.telemetryState[stateKey] = &copilotTelemetryCollectState{
+			signatures:        signatures,
+			eventFingerprints: fingerprints,
+		}
+		return out, nil
+	}
+
+	changed := changedCopilotTelemetryEvents(out, previous.eventFingerprints)
+	p.telemetryState[stateKey] = &copilotTelemetryCollectState{
+		signatures:        signatures,
+		eventFingerprints: fingerprints,
+	}
+	return changed, nil
 }
 
 // ParseHookPayload is not supported for the copilot provider.
