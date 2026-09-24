@@ -72,21 +72,33 @@ func parseSessionUsageFile(path, sessionsDir string) ([]sessionUsageRecord, erro
 	var countedSession bool
 
 	var records []sessionUsageRecord
+	var pending []int
+	setModel := func(model string) {
+		if strings.TrimSpace(model) == "" || model == "unknown" {
+			return
+		}
+		sessionDefaultModel, currentModel = model, model
+		for _, i := range pending {
+			records[i].modelName = normalizeModelName(model)
+			records[i].costModel = model
+		}
+		pending = nil
+	}
 	if err := walkSessionFile(path, func(record sessionLine) error {
 		switch {
 		case record.SessionMeta != nil:
 			sessionClient = classifyClient(record.SessionMeta.Source, record.SessionMeta.Originator)
-			if m := core.FirstNonEmpty(record.SessionMeta.Model, record.SessionMeta.ModelID); m != "" {
-				sessionDefaultModel = m
-				currentModel = m
-			}
+			setModel(core.FirstNonEmpty(record.SessionMeta.Model, record.SessionMeta.ModelID, record.SessionMeta.ProvenanceModel()))
 		case record.TurnContext != nil:
 			if m := core.FirstNonEmpty(record.TurnContext.Model, record.TurnContext.ModelID); strings.TrimSpace(m) != "" {
-				sessionDefaultModel = m
-				currentModel = m
+				setModel(m)
 			}
 		case record.EventPayload != nil:
 			payload := record.EventPayload
+			if payload.Type == "thread_settings_applied" && payload.ThreadSettings != nil {
+				setModel(payload.ThreadSettings.Model)
+				return nil
+			}
 			if payload.Type == "user_message" {
 				records = append(records, sessionUsageRecord{kind: sessionUsageKindUserMessage})
 				return nil
@@ -133,6 +145,9 @@ func parseSessionUsageFile(path, sessionsDir string) ([]sessionUsageRecord, erro
 				costModel:    currentModel,
 				countSession: countSession,
 			})
+			if currentModel == "unknown" {
+				pending = append(pending, len(records)-1)
+			}
 		case record.ResponseItem != nil:
 			item := record.ResponseItem
 			switch item.Type {

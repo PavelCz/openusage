@@ -2,12 +2,23 @@ package codex
 
 import (
 	"fmt"
+	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/janekbaraniewski/openusage/internal/core"
 	"github.com/janekbaraniewski/openusage/internal/providers/shared"
 )
+
+func codexSessionUsageBreakdownsEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("OPENUSAGE_CODEX_SKIP_SESSION_BREAKDOWNS"))) {
+	case "1", "true", "yes", "on":
+		return false
+	default:
+		return true
+	}
+}
 
 func (p *Provider) readSessionUsageBreakdowns(sessionsDir string, snap *core.UsageSnapshot) error {
 	today := time.Now().UTC().Format("2006-01-02")

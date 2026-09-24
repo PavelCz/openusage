@@ -1,5 +1,123 @@
 # Changelog
 
+## 0.25.0 (2026-08-31)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+### Dependencies
+* deps(deps): bump github.com/mattn/go-sqlite3 from 1.14.49 to 1.14.50 in the go-minor-and-patch group by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/328
+* deps(website): bump the website-minor-and-patch group in /website with 4 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/330
+* ci(actions): bump the actions-minor-and-patch group with 4 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/332
+* deps(docs): bump posthog-js from 1.417.0 to 1.418.7 in /docs/site in the docs-minor-and-patch group by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/329
+* deps(docs): bump posthog-js from 1.418.7 to 1.422.1 in /docs/site in the docs-minor-and-patch group by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/342
+* deps(website): bump the website-minor-and-patch group in /website with 3 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/343
+* ci(actions): bump the actions-minor-and-patch group with 4 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/344
+### Other Changes
+* docs: add CONTRIBUTING and CODE_OF_CONDUCT, file the #277 design note by @janekbaraniewski in https://github.com/janekbaraniewski/openusage/pull/340
+* fix(claude_code): try both known Keychain account names for Safe Storage password by @achappell in https://github.com/janekbaraniewski/openusage/pull/299
+* fix: don't clobber or leak a sibling account's session/usage data by @achappell in https://github.com/janekbaraniewski/openusage/pull/300
+* fix(codex): resolve session model from base_instructions provenance by @achappell in https://github.com/janekbaraniewski/openusage/pull/315
+* feat(antigravity): add Antigravity provider by @achappell in https://github.com/janekbaraniewski/openusage/pull/317
+* fix(telemetry): stop retention blanking the limit_snapshot the dashboard reads by @janekbaraniewski in https://github.com/janekbaraniewski/openusage/pull/341
+* perf(telemetry): skip the dedup enrich UPDATE when the merge changes nothing by @janekbaraniewski in https://github.com/janekbaraniewski/openusage/pull/339
+* fix(integrations): treat OpenCode plugin auto-discovery as configured by @janekbaraniewski in https://github.com/janekbaraniewski/openusage/pull/338
+* perf(daemon): preserve telemetry source collection state by @tttboy123 in https://github.com/janekbaraniewski/openusage/pull/269
+* feat(tui): make Analytics a standard screen, retiring the experimental flag by @janekbaraniewski in https://github.com/janekbaraniewski/openusage/pull/345
+
+## New Contributors
+* @tttboy123 made their first contribution in https://github.com/janekbaraniewski/openusage/pull/269
+
+**Full Changelog**: https://github.com/janekbaraniewski/openusage/compare/v0.24.4...v0.25.0
+
+## 0.24.4 (2026-08-17)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+### Dependencies
+* deps(deps): bump the go-minor-and-patch group with 3 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/320
+* deps(docs): bump posthog-js from 1.413.3 to 1.417.0 in /docs/site in the docs-minor-and-patch group by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/322
+* ci(actions): bump the actions-minor-and-patch group with 4 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/324
+* deps(website): bump the website-minor-and-patch group in /website with 2 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/321
+
+
+**Full Changelog**: https://github.com/janekbaraniewski/openusage/compare/v0.24.3...v0.24.4
+
+## 0.24.3 (2026-08-17)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+### Dependencies
+* deps(deps): bump github.com/klauspost/compress from 1.19.1 to 1.19.2 in the go-minor-and-patch group by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/308
+* deps(website): bump the website-minor-and-patch group in /website with 3 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/310
+* ci(actions): bump the actions-minor-and-patch group with 4 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/312
+* deps(docs): bump posthog-js from 1.409.3 to 1.413.3 in /docs/site in the docs-minor-and-patch group by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/309
+### Other Changes
+* fix(config): recover a config left with stale trailing bytes by @janekbaraniewski in https://github.com/janekbaraniewski/openusage/pull/319
+* fix(deps): patch transitive npm advisories in docs and website locks by @achappell in https://github.com/janekbaraniewski/openusage/pull/316
+
+
+**Full Changelog**: https://github.com/janekbaraniewski/openusage/compare/v0.24.2...v0.24.3
+
+## 0.24.2 (2026-08-08)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+### Dependencies
+* deps(deps): bump github.com/mattn/go-sqlite3 from 1.14.48 to 1.14.49 in the go-minor-and-patch group by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/294
+* deps(docs): bump the docs-minor-and-patch group in /docs/site with 3 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/296
+* deps(website): bump the website-minor-and-patch group in /website with 4 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/295
+* ci(actions): bump actions/stale from 10.4.0 to 11.0.0 by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/298
+* ci(actions): bump the actions-minor-and-patch group with 4 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/297
+* deps(docs): bump undici from 7.28.0 to 7.29.0 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/301
+* deps(docs): bump brace-expansion from 1.1.14 to 1.1.18 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/302
+* deps(docs): bump fast-uri from 3.1.4 to 3.1.5 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/303
+* deps(docs): bump mermaid from 11.15.0 to 11.16.1 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/304
+* deps(website): bump dompurify from 3.4.12 to 3.4.13 in /website by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/305
+* deps(docs): bump dompurify from 3.4.12 to 3.4.13 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/306
+* deps(docs): bump js-yaml from 4.1.1 to 4.3.1 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/307
+### Other Changes
+* Preserve full Claude model lineage in canonical identifiers by @sanjeevafk in https://github.com/janekbaraniewski/openusage/pull/285
+
+## New Contributors
+* @sanjeevafk made their first contribution in https://github.com/janekbaraniewski/openusage/pull/285
+
+**Full Changelog**: https://github.com/janekbaraniewski/openusage/compare/v0.24.1...v0.24.2
+
+## 0.24.1 (2026-08-01)
+
+<!-- Release notes generated using configuration in .github/release.yml at main -->
+
+## What's Changed
+### Dependencies
+* deps(docs): bump posthog-js from 1.399.2 to 1.404.1 in /docs/site in the docs-minor-and-patch group by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/270
+* ci(actions): bump actions/setup-node from 6.4.0 to 7.0.0 by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/274
+* ci(actions): bump actions/setup-python from 6 to 7 by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/275
+* ci(actions): bump actions/setup-go from 6.5.0 to 7.0.0 by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/273
+* ci(actions): bump the actions-minor-and-patch group with 4 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/272
+* deps(website): bump the website-minor-and-patch group in /website with 3 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/271
+* deps(docs): bump svgo from 3.3.3 to 3.3.4 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/278
+* deps(website): bump dompurify from 3.4.11 to 3.4.12 in /website by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/279
+* deps(docs): bump webpack-dev-server from 5.2.5 to 5.2.6 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/284
+* deps(docs): bump shell-quote from 1.8.4 to 1.10.0 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/281
+* deps(docs): bump fast-uri from 3.1.2 to 3.1.4 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/283
+* deps(docs): bump body-parser from 1.20.5 to 1.20.6 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/282
+* deps(docs): bump dompurify from 3.4.11 to 3.4.12 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/280
+* deps(deps): bump github.com/klauspost/compress from 1.19.0 to 1.19.1 in the go-minor-and-patch group by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/286
+* ci(actions): bump the actions-minor-and-patch group with 6 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/289
+* deps(docs): bump postcss from 8.5.14 to 8.5.23 in /docs/site by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/290
+* deps(docs): bump the docs-minor-and-patch group in /docs/site with 3 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/288
+* deps(website): bump the website-minor-and-patch group in /website with 4 updates by @dependabot[bot] in https://github.com/janekbaraniewski/openusage/pull/287
+### Other Changes
+* perf(daemon): gate on-demand read-model refresh on new data by @roehrijn in https://github.com/janekbaraniewski/openusage/pull/265
+* test: anchor time-dependent tests to a single instant by @janekbaraniewski in https://github.com/janekbaraniewski/openusage/pull/291
+
+
+**Full Changelog**: https://github.com/janekbaraniewski/openusage/compare/v0.24.0...v0.24.1
+
 ## 0.24.0 (2026-07-20)
 
 <!-- Release notes generated using configuration in .github/release.yml at main -->

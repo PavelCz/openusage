@@ -196,8 +196,11 @@ func (s *Store) Analyze(ctx context.Context) error {
 }
 
 func (s *Store) Init(ctx context.Context) error {
+	// SQLite ignores changes to foreign_keys inside a transaction.
+	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		return fmt.Errorf("telemetry: enable foreign keys: %w", err)
+	}
 	stmts := []string{
-		`PRAGMA foreign_keys = ON;`,
 		`CREATE TABLE IF NOT EXISTS usage_raw_events (
 			raw_event_id TEXT PRIMARY KEY,
 			ingested_at TEXT NOT NULL,
@@ -210,6 +213,7 @@ func (s *Store) Init(ctx context.Context) error {
 			agent_session_id TEXT
 		);`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_raw_events_ingested_at ON usage_raw_events(ingested_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_usage_raw_events_payload_pending ON usage_raw_events(ingested_at) WHERE source_payload != '{}';`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_raw_events_source ON usage_raw_events(source_system, source_channel);`,
 		`CREATE TABLE IF NOT EXISTS usage_events (
 			event_id TEXT PRIMARY KEY,
@@ -246,6 +250,47 @@ func (s *Store) Init(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_usage_events_provider_window ON usage_events(provider_id, account_id, occurred_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_events_provider_account_type_occurred ON usage_events(provider_id, account_id, event_type, occurred_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_events_type_provider ON usage_events(event_type, provider_id);`,
+		// Append-only invalidation log for the incremental usage read model. The
+		// payload stays deliberately small: readers already retain the previous
+		// winner and can reload the changed event by ID. Recording deletes is
+		// essential because retention can remove the current logical winner.
+		//
+		// Keep one row per (event_id, operation), replacing it on each change
+		// to allocate a fresh visible sequence. IGNORE advances sqlite_sequence
+		// but leaves the old row unchanged, hiding updates from active readers.
+		`CREATE TABLE IF NOT EXISTS usage_event_changes (
+			seq INTEGER PRIMARY KEY AUTOINCREMENT,
+			event_id TEXT NOT NULL,
+			operation TEXT NOT NULL CHECK(operation IN ('insert', 'update', 'delete')),
+			changed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		);`,
+		`DELETE FROM usage_event_changes
+		 WHERE NOT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_usage_event_changes_event_op')
+		 AND seq NOT IN (SELECT MAX(seq) FROM usage_event_changes GROUP BY event_id, operation);`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_event_changes_event_op ON usage_event_changes(event_id, operation);`,
+		`CREATE INDEX IF NOT EXISTS idx_usage_event_changes_event ON usage_event_changes(event_id, seq);`,
+		`DROP TRIGGER IF EXISTS trg_usage_events_change_insert;`,
+		`CREATE TRIGGER trg_usage_events_change_insert
+			AFTER INSERT ON usage_events BEGIN
+				INSERT OR REPLACE INTO usage_event_changes(event_id, operation) VALUES (NEW.event_id, 'insert');
+			END;`,
+		`DROP TRIGGER IF EXISTS trg_usage_events_change_update;`,
+		`CREATE TRIGGER trg_usage_events_change_update
+			AFTER UPDATE ON usage_events BEGIN
+				INSERT OR REPLACE INTO usage_event_changes(event_id, operation) VALUES (NEW.event_id, 'update');
+			END;`,
+		`DROP TRIGGER IF EXISTS trg_usage_events_change_delete;`,
+		`CREATE TRIGGER trg_usage_events_change_delete
+			AFTER DELETE ON usage_events BEGIN
+				INSERT OR REPLACE INTO usage_event_changes(event_id, operation) VALUES (OLD.event_id, 'delete');
+			END;`,
+		`DROP TRIGGER IF EXISTS trg_usage_raw_payload_change;`,
+		`CREATE TRIGGER trg_usage_raw_payload_change
+			AFTER UPDATE OF source_payload ON usage_raw_events
+			WHEN OLD.source_payload IS NOT NEW.source_payload BEGIN
+				INSERT OR REPLACE INTO usage_event_changes(event_id, operation)
+				SELECT event_id, 'update' FROM usage_events WHERE raw_event_id = NEW.raw_event_id;
+			END;`,
 		`CREATE INDEX IF NOT EXISTS idx_usage_raw_events_source_system ON usage_raw_events(source_system);`,
 		`CREATE TABLE IF NOT EXISTS usage_reconciliation_windows (
 			recon_id TEXT PRIMARY KEY,
@@ -317,12 +362,17 @@ func (s *Store) Init(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS daemon_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);`,
 	}
 
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("telemetry: begin schema: %w", err)
+	}
+	defer tx.Rollback()
 	for _, stmt := range stmts {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("telemetry: init schema: %w", err)
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // RunMigrations runs one-shot data repair migrations. Called at daemon startup.
@@ -677,13 +727,36 @@ func enrichEventByDedupKey(ctx context.Context, tx *sql.Tx, dedupKey string, nor
 	costUSD := chooseFloat64(current.CostUSD, norm.CostUSD, override)
 	requests := chooseInt64(current.Requests, norm.Requests, override)
 	status := chooseStatus(current.Status, norm.Status, override)
-	if canonicalEventMatches(
-		current,
-		providerID, accountID, workspaceID, sessionID, turnID, messageID, toolCallID,
-		modelRaw, modelCanonical, modelLineage,
-		inputTokens, outputTokens, reasoningTokens, cacheReadTokens, cacheWriteTokens,
-		totalTokens, costUSD, requests, toolName, status,
-	) {
+
+	// A re-ingested event usually merges to exactly what is already stored:
+	// local-file sources re-import their recent history every collection
+	// cycle, and a hook event often arrives again from the session file. The
+	// UPDATE below rewrites twenty columns, dirtying the row's page and every
+	// index covering them, and all of it lands in the WAL. Issuing it for a
+	// merge that changes nothing turned steady-state ingest into sustained
+	// write amplification (#318), so compare first and skip the no-op.
+	if !canonicalEventDiffers(current, canonicalEventFields{
+		providerID:       providerID,
+		accountID:        accountID,
+		workspaceID:      workspaceID,
+		sessionID:        sessionID,
+		turnID:           turnID,
+		messageID:        messageID,
+		toolCallID:       toolCallID,
+		modelRaw:         modelRaw,
+		modelCanonical:   modelCanonical,
+		modelLineage:     modelLineage,
+		toolName:         toolName,
+		inputTokens:      inputTokens,
+		outputTokens:     outputTokens,
+		reasoningTokens:  reasoningTokens,
+		cacheReadTokens:  cacheReadTokens,
+		cacheWriteTokens: cacheWriteTokens,
+		totalTokens:      totalTokens,
+		costUSD:          costUSD,
+		requests:         requests,
+		status:           status,
+	}) {
 		return nil
 	}
 
@@ -737,59 +810,111 @@ func enrichEventByDedupKey(ctx context.Context, tx *sql.Tx, dedupKey string, nor
 	return err
 }
 
-func canonicalEventMatches(
-	current storedCanonicalEvent,
-	providerID, accountID, workspaceID, sessionID, turnID, messageID, toolCallID string,
-	modelRaw, modelCanonical, modelLineage string,
-	inputTokens, outputTokens, reasoningTokens, cacheReadTokens, cacheWriteTokens *int64,
-	totalTokens *int64,
-	costUSD *float64,
-	requests *int64,
-	toolName string,
-	status EventStatus,
-) bool {
-	return nullStringMatches(current.ProviderID, providerID) &&
-		nullStringMatches(current.AccountID, accountID) &&
-		nullStringMatches(current.WorkspaceID, workspaceID) &&
-		nullStringMatches(current.SessionID, sessionID) &&
-		nullStringMatches(current.TurnID, turnID) &&
-		nullStringMatches(current.MessageID, messageID) &&
-		nullStringMatches(current.ToolCallID, toolCallID) &&
-		nullStringMatches(current.ModelRaw, modelRaw) &&
-		nullStringMatches(current.ModelCanonical, modelCanonical) &&
-		nullStringMatches(current.ModelLineageID, modelLineage) &&
-		nullInt64Matches(current.InputTokens, inputTokens) &&
-		nullInt64Matches(current.OutputTokens, outputTokens) &&
-		nullInt64Matches(current.Reasoning, reasoningTokens) &&
-		nullInt64Matches(current.CacheRead, cacheReadTokens) &&
-		nullInt64Matches(current.CacheWrite, cacheWriteTokens) &&
-		nullInt64Matches(current.TotalTokens, totalTokens) &&
-		nullFloat64Matches(current.CostUSD, costUSD) &&
-		nullInt64Matches(current.Requests, requests) &&
-		nullStringMatches(current.ToolName, toolName) &&
-		strings.TrimSpace(current.Status) == strings.TrimSpace(string(status))
+// canonicalEventFields is the merged result enrichEventByDedupKey is about to
+// write, in the same nullable-or-zero form the UPDATE binds.
+type canonicalEventFields struct {
+	providerID       string
+	accountID        string
+	workspaceID      string
+	sessionID        string
+	turnID           string
+	messageID        string
+	toolCallID       string
+	modelRaw         string
+	modelCanonical   string
+	modelLineage     string
+	toolName         string
+	inputTokens      *int64
+	outputTokens     *int64
+	reasoningTokens  *int64
+	cacheReadTokens  *int64
+	cacheWriteTokens *int64
+	totalTokens      *int64
+	costUSD          *float64
+	requests         *int64
+	status           EventStatus
 }
 
-func nullStringMatches(current sql.NullString, value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return !current.Valid || strings.TrimSpace(current.String) == ""
+// canonicalEventDiffers reports whether writing merged would change the stored
+// row. Each comparison mirrors the binder the UPDATE uses for that column, so
+// a value the binder would store as NULL compares equal to a NULL column:
+// nullable() nulls a blank string, and nullableInt64/nullableFloat64 null a nil
+// pointer. Getting that mapping wrong would either skip a real update or never
+// skip at all, so the binders are the reference, not the Go zero value.
+func canonicalEventDiffers(current storedCanonicalEvent, merged canonicalEventFields) bool {
+	strFields := []struct {
+		stored sql.NullString
+		next   string
+	}{
+		{current.ProviderID, merged.providerID},
+		{current.AccountID, merged.accountID},
+		{current.WorkspaceID, merged.workspaceID},
+		{current.SessionID, merged.sessionID},
+		{current.TurnID, merged.turnID},
+		{current.MessageID, merged.messageID},
+		{current.ToolCallID, merged.toolCallID},
+		{current.ModelRaw, merged.modelRaw},
+		{current.ModelCanonical, merged.modelCanonical},
+		{current.ModelLineageID, merged.modelLineage},
+		{current.ToolName, merged.toolName},
 	}
-	return current.Valid && strings.TrimSpace(current.String) == value
+	for _, f := range strFields {
+		if nullStringDiffers(f.stored, f.next) {
+			return true
+		}
+	}
+
+	intFields := []struct {
+		stored sql.NullInt64
+		next   *int64
+	}{
+		{current.InputTokens, merged.inputTokens},
+		{current.OutputTokens, merged.outputTokens},
+		{current.Reasoning, merged.reasoningTokens},
+		{current.CacheRead, merged.cacheReadTokens},
+		{current.CacheWrite, merged.cacheWriteTokens},
+		{current.TotalTokens, merged.totalTokens},
+		{current.Requests, merged.requests},
+	}
+	for _, f := range intFields {
+		if nullInt64Differs(f.stored, f.next) {
+			return true
+		}
+	}
+
+	if nullFloat64Differs(current.CostUSD, merged.costUSD) {
+		return true
+	}
+
+	// status is bound as a plain string, never NULL.
+	return current.Status != string(merged.status)
 }
 
-func nullInt64Matches(current sql.NullInt64, value *int64) bool {
-	if value == nil {
-		return !current.Valid
+// nullStringDiffers compares a stored column against what nullable(next) would
+// write: NULL for a blank string, otherwise next verbatim.
+func nullStringDiffers(stored sql.NullString, next string) bool {
+	if strings.TrimSpace(next) == "" {
+		return stored.Valid
 	}
-	return current.Valid && current.Int64 == *value
+	return !stored.Valid || stored.String != next
 }
 
-func nullFloat64Matches(current sql.NullFloat64, value *float64) bool {
-	if value == nil {
-		return !current.Valid
+// nullInt64Differs compares a stored column against what nullableInt64(next)
+// would write: NULL for a nil pointer, otherwise *next.
+func nullInt64Differs(stored sql.NullInt64, next *int64) bool {
+	if next == nil {
+		return stored.Valid
 	}
-	return current.Valid && current.Float64 == *value
+	return !stored.Valid || stored.Int64 != *next
+}
+
+// nullFloat64Differs compares a stored column against what
+// nullableFloat64(next) would write: NULL for a nil pointer, otherwise *next.
+func nullFloat64Differs(stored sql.NullFloat64, next *float64) bool {
+	if next == nil {
+		return stored.Valid
+	}
+	return !stored.Valid || stored.Float64 != *next
 }
 
 func sourceChannelPriority(channel SourceChannel) int {
@@ -960,7 +1085,7 @@ func (s *Store) PruneOldEvents(ctx context.Context, retentionDays int, rolledThr
 		// detail. Not an error; the next pass (after a rollup) will prune.
 		return 0, false, nil
 	}
-	cutoff := fmt.Sprintf("-%d day", retentionDays)
+	cutoff := s.retentionCutoff(time.Duration(retentionDays) * 24 * time.Hour)
 	for {
 		if ctx.Err() != nil {
 			return deleted, false, nil
@@ -973,7 +1098,7 @@ func (s *Store) PruneOldEvents(ctx context.Context, retentionDays int, rolledThr
 			DELETE FROM usage_events
 			WHERE event_id IN (
 				SELECT event_id FROM usage_events
-				WHERE occurred_at < datetime('now', ?)
+				WHERE occurred_at < ?
 				  AND date(occurred_at) <= ?
 				ORDER BY occurred_at ASC
 				LIMIT ?
@@ -1019,22 +1144,69 @@ func (s *Store) PruneOrphanRawEvents(ctx context.Context, limit int) (int64, err
 	return n, nil
 }
 
+// retentionCutoff renders a horizon as an RFC3339Nano string comparable against
+// the timestamp columns.
+//
+// The columns store time.RFC3339Nano ("2026-08-31T08:57:12.211861Z"), so they
+// must not be compared against datetime('now', ...), which renders a space
+// separator ("2026-08-31 07:57:34"). Those forms only sort consistently when
+// the dates differ: on the same day the 'T' (0x54) outranks the ' ' (0x20), so
+// every row ingested earlier today compares as newer than the horizon and
+// escapes pruning. The horizon effectively became "previous calendar days"
+// instead of "older than N hours".
+//
+// Rendering the bound in Go keeps both sides in one format and, unlike wrapping
+// the column in datetime(), leaves the index on that column usable.
+func (s *Store) retentionCutoff(d time.Duration) string {
+	return s.now().UTC().Add(-d).Format(time.RFC3339Nano)
+}
+
 // PruneRawEventPayloads clears source_payload from old raw events to reclaim
-// disk space. All useful data has already been extracted into usage_events.
-// Keeps payloads for events newer than retentionHours.
+// disk space. For usage events all useful data has already been extracted into
+// usage_events columns, so the payload is redundant detail. Keeps payloads for
+// events newer than retentionHours.
+//
+// limit_snapshot is the exception: its payload IS the read model's source of
+// truth. hydrateRootsFromLimitSnapshots reads the newest one back per
+// provider/account to rebuild a provider's metrics, and nothing in
+// usage_events can substitute for it. Blanking it left the dashboard
+// hydrating from an empty envelope, which reads as a confident UNKNOWN with no
+// metrics and survives a daemon restart because the damage is in the database
+// (#293).
+//
+// Only the newest limit_snapshot per (provider_id, account_id) is protected.
+// The historical ones are never read back and are the bulk of the volume, so
+// they still get reclaimed.
 func (s *Store) PruneRawEventPayloads(ctx context.Context, retentionHours int, limit int) (int64, error) {
 	if s == nil || s.db == nil || retentionHours < 0 || limit <= 0 {
 		return 0, nil
 	}
-	cutoff := fmt.Sprintf("-%d hours", retentionHours)
+	cutoff := s.retentionCutoff(time.Duration(retentionHours) * time.Hour)
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE usage_raw_events
 		SET source_payload = '{}'
 		WHERE raw_event_id IN (
 			SELECT raw_event_id
 			FROM usage_raw_events
-			WHERE ingested_at < datetime('now', ?)
+			WHERE ingested_at < ?
 			  AND source_payload != '{}'
+			  AND raw_event_id NOT IN (
+				SELECT e.raw_event_id
+				FROM usage_events e
+				JOIN (
+					SELECT
+						COALESCE(provider_id, '') AS provider_id,
+						COALESCE(account_id, '') AS account_id,
+						MAX(occurred_at) AS occurred_at
+					FROM usage_events
+					WHERE event_type = 'limit_snapshot'
+					GROUP BY 1, 2
+				) latest
+				  ON COALESCE(e.provider_id, '') = latest.provider_id
+				 AND COALESCE(e.account_id, '') = latest.account_id
+				 AND e.occurred_at = latest.occurred_at
+				WHERE e.event_type = 'limit_snapshot'
+			  )
 			ORDER BY ingested_at ASC
 			LIMIT ?
 		)
@@ -1047,6 +1219,105 @@ func (s *Store) PruneRawEventPayloads(ctx context.Context, retentionHours int, l
 		return 0, fmt.Errorf("telemetry: prune raw event payloads rows affected: %w", err)
 	}
 	return n, nil
+}
+
+// PruneUsageEventChanges bounds the durable incremental-read-model log. A
+// three-day age gate avoids churning an active reader, while retainTail keeps
+// a useful suffix even on quiet installations. Readers detect sequence gaps
+// and safely cold-rebuild instead of applying an incomplete suffix.
+//
+// After coalescing the change log on (event_id, operation), one event can
+// contribute at most three rows (insert/update/delete), so the log size is
+// bounded by O(distinct events), not O(event operations). The 500k default
+// tail (replaced from 50k) is sized to hold a full backlog for a typical
+// 3-day retention window even on busy installations.
+func (s *Store) PruneUsageEventChanges(ctx context.Context, retainTail int) (int64, error) {
+	if s == nil || s.db == nil || retainTail < 1 {
+		return 0, nil
+	}
+	res, err := s.db.ExecContext(ctx, `
+		DELETE FROM usage_event_changes
+		WHERE seq <= (SELECT COALESCE(MAX(seq), 0) - ? FROM usage_event_changes)
+		  AND datetime(changed_at) < datetime('now', '-3 day')
+	`, retainTail)
+	if err != nil {
+		return 0, fmt.Errorf("telemetry: prune usage event changes: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("telemetry: prune usage event changes rows affected: %w", err)
+	}
+	return n, nil
+}
+
+// usageEventChangesCount returns the current row count of the change log.
+// SQLite scans the compact change-log index for this count.
+func (s *Store) usageEventChangesCount(ctx context.Context) (int64, error) {
+	if s == nil || s.db == nil {
+		return 0, nil
+	}
+	var n int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_event_changes`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("telemetry: count usage event changes: %w", err)
+	}
+	return n, nil
+}
+
+// PruneUsageEventChangesToSize drains the change log to at most targetRows,
+// keeping the most recent retainTail rows regardless of age. The age gate is
+// retained for the tail only; older rows that exceed the size budget are
+// removed unconditionally so a backlog (e.g. from a long-down daemon) drains
+// in seconds rather than over many 6h ticks.
+//
+// Returns (rowsDeleted, done). done is false when the caller should reschedule
+// soon: either the context expired mid-prune or the row count is still above
+// targetRows and the budget for this call ran out.
+func (s *Store) PruneUsageEventChangesToSize(ctx context.Context, targetRows, retainTail int64) (int64, bool, error) {
+	if s == nil || s.db == nil || targetRows < 0 || retainTail < 0 {
+		return 0, true, nil
+	}
+	const chunkSize int64 = 5000
+	var totalDeleted int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return totalDeleted, false, err
+		}
+		var current int64
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM usage_event_changes`).Scan(&current); err != nil {
+			return totalDeleted, false, fmt.Errorf("telemetry: count usage event changes: %w", err)
+		}
+		if current <= max(targetRows, retainTail) {
+			return totalDeleted, true, nil
+		}
+		// Trim only what we can afford in this call. retainTail still
+		// protects the hot suffix; everything older than that is removed
+		// to make room for the next chunk.
+		budget := current - max(targetRows, retainTail)
+		if budget > chunkSize {
+			budget = chunkSize
+		}
+		res, err := s.db.ExecContext(ctx, `
+			DELETE FROM usage_event_changes
+			WHERE seq IN (
+				SELECT seq FROM usage_event_changes
+				ORDER BY seq
+				LIMIT ?
+			)
+		`, budget)
+		if err != nil {
+			return totalDeleted, false, fmt.Errorf("telemetry: drain usage event changes: %w", err)
+		}
+		deleted, err := res.RowsAffected()
+		if err != nil {
+			return totalDeleted, false, fmt.Errorf("telemetry: drain usage event changes rows affected: %w", err)
+		}
+		totalDeleted += deleted
+		if deleted == 0 {
+			// No further progress possible (everything older than the
+			// tail is already gone). Caller can stop.
+			return totalDeleted, true, nil
+		}
+	}
 }
 
 // newUUID generates a random UUID v4 string.

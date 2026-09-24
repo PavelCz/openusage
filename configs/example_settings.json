@@ -9,9 +9,6 @@
     "time_window": "7d",
     "retention_days": 30
   },
-  "experimental": {
-    "analytics": false
-  },
   "model_normalization": {
     "enabled": true,
     "group_by": "lineage",
@@ -158,6 +155,12 @@
       "id": "gemini-cli",
       "provider": "gemini_cli",
       "binary": "gemini"
+    },
+    {
+      "id": "antigravity",
+      "provider": "antigravity",
+      "auth": "local",
+      "binary": "agy"
     },
     {
       "id": "copilot",

@@ -22,7 +22,7 @@ const (
 	defaultChatGPTBaseURL   = "https://chatgpt.com/backend-api"
 	defaultUsageWindowLabel = "all-time"
 
-	maxScannerBufferSize = 8 * 1024 * 1024
+	maxScannerBufferSize = 32 * 1024 * 1024
 	maxHTTPErrorBodySize = 256
 
 	maxBreakdownMetrics = 8
@@ -33,18 +33,21 @@ var errLiveUsageAuth = errors.New("live usage auth failed")
 
 type Provider struct {
 	providerbase.Base
-	telemetryCacheMu    sync.Mutex
-	telemetryCache      map[string]*telemetryCacheEntry
-	sessionUsageCacheMu sync.Mutex
-	sessionUsageCache   map[string]*sessionUsageCacheEntry
-	creditHistoryMu     sync.Mutex
-	creditHistory       map[string][]creditUsageObservation
+	telemetryCacheMu             sync.Mutex
+	telemetryCache               map[string]*telemetryCacheEntry
+	telemetryBaselineInitialized bool
+	sessionUsageCacheMu          sync.Mutex
+	sessionUsageCache            map[string]*sessionUsageCacheEntry
+	creditHistoryMu              sync.Mutex
+	creditHistory                map[string][]creditUsageObservation
 }
 
 type telemetryCacheEntry struct {
-	modTime           time.Time
-	size              int64
-	eventFingerprints map[string][32]byte
+	modTime    time.Time
+	size       int64
+	byteOffset int64
+	lineNumber int
+	state      *telemetryParserState
 }
 
 func New() *Provider {
@@ -92,6 +95,48 @@ type creditInfo struct {
 	HasCredits bool     `json:"has_credits"`
 	Unlimited  bool     `json:"unlimited"`
 	Balance    *float64 `json:"balance"`
+}
+
+func (c *creditInfo) UnmarshalJSON(data []byte) error {
+	type Alias creditInfo
+	aux := &struct {
+		Balance interface{} `json:"balance"`
+		*Alias
+	}{
+		Alias: (*Alias)(c),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.Balance != nil {
+		switch v := aux.Balance.(type) {
+		case string:
+			s := strings.TrimSpace(v)
+			s = strings.TrimPrefix(s, "$")
+			s = strings.ReplaceAll(s, ",", "")
+			if s == "" {
+				c.Balance = nil
+			} else {
+				f, err := strconv.ParseFloat(s, 64)
+				if err != nil {
+					return fmt.Errorf("codex credit balance %q: %w", v, err)
+				}
+				c.Balance = &f
+			}
+		case float64:
+			f := v
+			c.Balance = &f
+		case json.Number:
+			f, err := v.Float64()
+			if err != nil {
+				return fmt.Errorf("codex credit balance %q: %w", v.String(), err)
+			}
+			c.Balance = &f
+		default:
+			return fmt.Errorf("codex credit balance has unexpected type %T", v)
+		}
+	}
+	return nil
 }
 
 type versionInfo struct {
@@ -290,8 +335,12 @@ func (p *Provider) Fetch(ctx context.Context, acct core.AccountConfig) (core.Usa
 	if err := p.readDailySessionCounts(sessionsDir, &snap); err != nil {
 		snap.Raw["session_counts_error"] = err.Error()
 	}
-	if err := p.readSessionUsageBreakdowns(sessionsDir, &snap); err != nil {
-		snap.Raw["split_error"] = err.Error()
+	if codexSessionUsageBreakdownsEnabled() {
+		if err := p.readSessionUsageBreakdowns(sessionsDir, &snap); err != nil {
+			snap.Raw["split_error"] = err.Error()
+		}
+	} else {
+		snap.Raw["session_breakdowns"] = "disabled"
 	}
 
 	hasLiveData, liveErr := p.fetchLiveUsage(ctx, acct, configDir, &snap)

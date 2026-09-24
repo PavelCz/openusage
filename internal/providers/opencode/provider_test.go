@@ -4,13 +4,25 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
-	"github.com/janekbaraniewski/openusage/internal/browsercookies"
 	"github.com/janekbaraniewski/openusage/internal/config"
 	"github.com/janekbaraniewski/openusage/internal/core"
 )
+
+// TestMain neutralizes the stored-session lookup for the whole package. Left at
+// its default it reads the developer's real credentials file, so a machine with
+// a connected OpenCode account would drive console enrichment against the live
+// service instead of the test server. Tests that exercise console enrichment
+// override this seam with a session of their own.
+func TestMain(m *testing.M) {
+	loadStoredSession = func(string) (config.BrowserSession, bool, error) {
+		return config.BrowserSession{}, false, nil
+	}
+	os.Exit(m.Run())
+}
 
 func zenModelsBody() string {
 	return `{
@@ -126,14 +138,16 @@ func TestFetch_RateLimited_429(t *testing.T) {
 }
 
 func TestFetch_ConsoleEnrichmentAutoDiscoversWorkspaceID(t *testing.T) {
-	origLoadBrowserSession := loadBrowserSession
+	origLoadStoredSession := loadStoredSession
 	origNewConsoleClient := newConsoleClient
 	t.Cleanup(func() {
-		loadBrowserSession = origLoadBrowserSession
+		loadStoredSession = origLoadStoredSession
 		newConsoleClient = origNewConsoleClient
 	})
 
-	loadBrowserSession = func(context.Context, core.AccountConfig, browsercookies.Reader) (config.BrowserSession, bool, error) {
+	// enrichFromConsole calls loadStoredSession, a pure credentials-file
+	// read with no browser refresh.
+	loadStoredSession = func(accountID string) (config.BrowserSession, bool, error) {
 		return config.BrowserSession{
 			Value:         "test-cookie-value",
 			CookieName:    "auth",

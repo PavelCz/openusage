@@ -12,6 +12,7 @@ OpenUsage follows the [XDG Base Directory Specification](https://specifications.
 | Path | Purpose | Override |
 |---|---|---|
 | `~/.config/openusage/settings.json` | Main config file. | — |
+| `~/.config/openusage/settings.json.corrupt` | Copy of a `settings.json` OpenUsage had to salvage, kept for inspection. Overwritten on each repair. See [common issues](../troubleshooting/common-issues.md). | — |
 | `~/.config/openusage/custom-pricing.json` | User pricing overrides. | `OPENUSAGE_CUSTOM_PRICING`, `XDG_CONFIG_HOME` |
 | `~/.config/openusage/themes/` | External themes directory (scanned for `*.json`). | `OPENUSAGE_THEME_DIR` (extra dirs only) |
 | `~/.config/openusage/hooks/` | Hook scripts installed by `openusage integrations`. | — |
@@ -39,7 +40,7 @@ These belong to the third-party tools OpenUsage hooks into.
 |---|---|---|---|
 | `~/.claude/settings.json` | Claude Code | Hook registration. | `CLAUDE_SETTINGS_FILE` |
 | `~/.codex/config.toml` | Codex | `notify` registration. | `CODEX_CONFIG_DIR` |
-| `~/.config/opencode/opencode.json` | OpenCode | Plugin registration. | — |
+| `~/.config/opencode/opencode.json` or `opencode.jsonc` | OpenCode | Read only. Plugin registration is not required — OpenCode auto-discovers the plugin directory. Legacy entries written by openusage < 0.24.5 are still honored and removed on uninstall. | — |
 | `~/.config/opencode/plugins/openusage-telemetry.ts` | OpenCode | Plugin source installed by `integrations install opencode`. | — |
 | `~/.local/share/opencode/auth.json` | OpenCode | API keys adopted by auto-detection (OpenCode's data dir). | `XDG_DATA_HOME` |
 
