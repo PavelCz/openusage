@@ -364,7 +364,8 @@ func (s *Service) startSocketServer(ctx context.Context) error {
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 		_ = listener.Close()
-		_ = os.Remove(s.cfg.SocketPath)
+		// UnixListener.Close removes its own socket. Do not unlink again:
+		// another dashboard may already have bound a replacement socket.
 	}()
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {

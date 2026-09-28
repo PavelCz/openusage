@@ -47,11 +47,12 @@ func runDashboard(cfg config.Config) {
 
 	socketPath := daemon.ResolveSocketPath()
 
-	viewRuntime := daemon.NewViewRuntime(
-		nil,
-		socketPath,
-		verbose,
-	)
+	viewRuntime := daemon.NewSessionViewRuntime(ctx, daemon.Config{
+		SocketPath:      socketPath,
+		CollectInterval: interval,
+		PollInterval:    interval,
+		Verbose:         verbose,
+	})
 	viewRuntime.SetTimeWindow(timeWindow)
 
 	var program *tea.Program
@@ -121,9 +122,6 @@ func runDashboard(cfg config.Config) {
 	})
 
 	model.SetOnInstallDaemon(func() error {
-		if err := daemon.InstallService(strings.TrimSpace(socketPath)); err != nil {
-			return err
-		}
 		viewRuntime.ResetEnsureThrottle()
 		return nil
 	})
@@ -174,15 +172,19 @@ func runDashboard(cfg config.Config) {
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 	go func() {
-		<-sigCh
-		cancel()
-		program.Quit()
+		select {
+		case <-sigCh:
+			cancel()
+			program.Quit()
+		case <-ctx.Done():
+		}
 	}()
 
 	if _, err := program.Run(); err != nil {
 		log.SetOutput(os.Stderr)
-		log.Fatalf("TUI error: %v", err)
+		log.Printf("TUI error: %v", err)
 	}
 }
 

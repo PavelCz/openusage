@@ -15,8 +15,9 @@ type ViewRuntime struct {
 	clientMu sync.RWMutex
 	client   *Client
 
-	socketPath string
-	verbose    bool
+	socketPath   string
+	verbose      bool
+	ensureClient func(context.Context) (*Client, error)
 
 	ensureMu          sync.Mutex
 	lastEnsureAttempt time.Time
@@ -86,7 +87,13 @@ func (r *ViewRuntime) EnsureClient(ctx context.Context) *Client {
 	ensureCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
 
-	client, err := EnsureRunning(ensureCtx, r.socketPath, r.verbose)
+	ensure := r.ensureClient
+	if ensure == nil {
+		ensure = func(ctx context.Context) (*Client, error) {
+			return EnsureRunning(ctx, r.socketPath, r.verbose)
+		}
+	}
+	client, err := ensure(ensureCtx)
 	if err != nil {
 		r.setState(ClassifyEnsureError(err))
 		return nil
